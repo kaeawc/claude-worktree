@@ -510,15 +510,15 @@ _cw_issue() {
   if [[ -z "$issue_num" ]]; then
     gum spin --spinner dot --title "Fetching issues..." -- sleep 0.1
 
-    local issues=$(gh issue list --limit 20 --state open --json number,title,labels \
-      --template '{{range .}}#{{.number}} | {{.title}}{{if .labels}} |{{range .labels}} {{.name}}{{end}}{{end}}{{"\n"}}{{end}}' 2>/dev/null)
+    local issues=$(gh issue list --limit 100 --state open --json number,title,labels \
+      --template '{{range .}}#{{.number}} | {{.title}}{{if .labels}} |{{range .labels}} [{{.name}}]{{end}}{{end}}{{"\n"}}{{end}}' 2>/dev/null)
 
     if [[ -z "$issues" ]]; then
       gum style --foreground 1 "No open issues found or not in a GitHub repository"
       return 1
     fi
 
-    local selection=$(echo "$issues" | gum filter --placeholder "Select an issue to work on...")
+    local selection=$(echo "$issues" | gum filter --height 20 --placeholder "Type to filter issues...")
 
     if [[ -z "$selection" ]]; then
       gum style --foreground 3 "Cancelled"
@@ -571,15 +571,25 @@ _cw_pr() {
   if [[ -z "$pr_num" ]]; then
     gum spin --spinner dot --title "Fetching pull requests..." -- sleep 0.1
 
-    local prs=$(gh pr list --limit 20 --state open --json number,title,author,headRefName,baseRefName \
-      --template '{{range .}}#{{.number}} | {{.title}} | @{{.author.login}}{{"\n"}}{{end}}' 2>/dev/null)
+    local prs=$(gh pr list --limit 100 --state open --json number,title,author,headRefName,baseRefName,labels,statusCheckRollup 2>/dev/null | \
+      jq -r '.[] | "#\(.number) | \(
+        if (.statusCheckRollup | length == 0) then "○"
+        elif (.statusCheckRollup | all(.state == "SUCCESS")) then "✓"
+        elif (.statusCheckRollup | any(.state == "FAILURE" or .state == "ERROR")) then "✗"
+        else "○"
+        end
+      ) | \(.title) | @\(.author.login)\(
+        if (.labels | length > 0) then " |" + ([.labels[].name] | map(" [\(.)]") | join(""))
+        else ""
+        end
+      )"')
 
     if [[ -z "$prs" ]]; then
       gum style --foreground 1 "No open PRs found or not in a GitHub repository"
       return 1
     fi
 
-    local selection=$(echo "$prs" | gum filter --placeholder "Select a PR to review...")
+    local selection=$(echo "$prs" | gum filter --height 20 --placeholder "Type to filter PRs... (✓=passing ✗=failing ○=pending)")
 
     if [[ -z "$selection" ]]; then
       gum style --foreground 3 "Cancelled"
@@ -739,7 +749,7 @@ _claude_worktree() {
         issue)
           local -a issues
           if command -v gh &>/dev/null; then
-            issues=(${(f)"$(gh issue list --limit 20 --state open --json number,title \
+            issues=(${(f)"$(gh issue list --limit 100 --state open --json number,title \
               --jq '.[] | "\(.number):\(.title | gsub(":";" "))"' 2>/dev/null)"})
           fi
           if [[ ${#issues[@]} -gt 0 ]]; then
@@ -749,7 +759,7 @@ _claude_worktree() {
         pr)
           local -a prs
           if command -v gh &>/dev/null; then
-            prs=(${(f)"$(gh pr list --limit 20 --state open --json number,title \
+            prs=(${(f)"$(gh pr list --limit 100 --state open --json number,title \
               --jq '.[] | "\(.number):\(.title | gsub(":";" "))"' 2>/dev/null)"})
           fi
           if [[ ${#prs[@]} -gt 0 ]]; then
