@@ -1032,14 +1032,54 @@ _aw_issue() {
       return 1
     fi
 
-    local selection=$(echo "$issues" | gum filter --placeholder "Type to filter issues...")
+    # Detect which issues have active worktrees
+    local active_issues=()
+    local worktree_list=$(git worktree list --porcelain 2>/dev/null | grep "^worktree " | sed 's/^worktree //')
+    if [[ -n "$worktree_list" ]]; then
+      while IFS= read -r wt_path; do
+        if [[ -d "$wt_path" ]]; then
+          local wt_branch=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+          if [[ -n "$wt_branch" ]]; then
+            local wt_issue=$(_aw_extract_issue_number "$wt_branch")
+            if [[ -n "$wt_issue" ]]; then
+              active_issues+=("$wt_issue")
+            fi
+          fi
+        fi
+      done <<< "$worktree_list"
+    fi
+
+    # Add highlighting for issues with active worktrees
+    local highlighted_issues=""
+    while IFS= read -r issue_line; do
+      if [[ -n "$issue_line" ]]; then
+        # Extract issue number from the line
+        local line_issue=$(echo "$issue_line" | sed 's/^#//' | cut -d'|' -f1 | tr -d ' ')
+        # Check if this issue has an active worktree
+        local is_active=false
+        for active in "${active_issues[@]}"; do
+          if [[ "$active" == "$line_issue" ]]; then
+            is_active=true
+            break
+          fi
+        done
+        # Add indicator if active
+        if [[ "$is_active" == "true" ]]; then
+          highlighted_issues+="$(echo "$issue_line" | sed 's/^#/● #/')"$'\n'
+        else
+          highlighted_issues+="$issue_line"$'\n'
+        fi
+      fi
+    done <<< "$issues"
+
+    local selection=$(echo "$highlighted_issues" | gum filter --placeholder "Type to filter issues... (● = active worktree)")
 
     if [[ -z "$selection" ]]; then
       gum style --foreground 3 "Cancelled"
       return 0
     fi
 
-    issue_num=$(echo "$selection" | sed 's/^#//' | cut -d'|' -f1 | tr -d ' ')
+    issue_num=$(echo "$selection" | sed 's/^● *//' | sed 's/^#//' | cut -d'|' -f1 | tr -d ' ')
   fi
 
   # Fetch issue details including body
@@ -1050,6 +1090,53 @@ _aw_issue() {
   if [[ -z "$title" ]]; then
     gum style --foreground 1 "Could not fetch issue #$issue_num"
     return 1
+  fi
+
+  # Check if a worktree already exists for this issue
+  local existing_worktree=""
+  local worktree_list=$(git worktree list --porcelain 2>/dev/null | grep "^worktree " | sed 's/^worktree //')
+  if [[ -n "$worktree_list" ]]; then
+    while IFS= read -r wt_path; do
+      if [[ -d "$wt_path" ]]; then
+        local wt_branch=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+        if [[ -n "$wt_branch" ]]; then
+          local wt_issue=$(_aw_extract_issue_number "$wt_branch")
+          if [[ "$wt_issue" == "$issue_num" ]]; then
+            existing_worktree="$wt_path"
+            break
+          fi
+        fi
+      fi
+    done <<< "$worktree_list"
+  fi
+
+  # If an active worktree exists for this issue, offer to resume it
+  if [[ -n "$existing_worktree" ]]; then
+    echo ""
+    gum style --foreground 3 "Active worktree found for issue #$issue_num:"
+    echo "  $existing_worktree"
+    echo ""
+
+    if gum confirm "Resume existing worktree?"; then
+      cd "$existing_worktree" || return 1
+
+      # Set terminal title for GitHub issue
+      printf '\033]0;GitHub Issue #%s - %s\007' "$issue_num" "$title"
+
+      _resolve_ai_command || return 1
+
+      if [[ "$AI_CMD" != "skip" ]]; then
+        gum style --foreground 2 "Starting $AI_CMD_NAME..."
+        $AI_CMD
+      else
+        gum style --foreground 3 "Skipping AI tool - worktree is ready for manual work"
+      fi
+      return 0
+    else
+      echo ""
+      gum style --foreground 3 "Continuing to create new worktree..."
+      echo ""
+    fi
   fi
 
   # Generate suggested branch name
