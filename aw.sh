@@ -76,6 +76,7 @@ _install_ai_tool() {
   local choice=$(gum choose \
     "Install Claude Code (Anthropic)" \
     "Install Codex CLI (OpenAI)" \
+    "Install Gemini CLI (Google)" \
     "Skip - don't use an AI tool" \
     "Cancel")
 
@@ -99,6 +100,15 @@ _install_ai_tool() {
       echo ""
       return 1
       ;;
+    "Install Gemini CLI (Google)")
+      echo ""
+      gum style --foreground 6 "Install Gemini CLI with:"
+      echo "  • npm:     npm install -g @google/gemini-cli"
+      echo ""
+      echo "For more information, visit: https://github.com/google-gemini/gemini-cli"
+      echo ""
+      return 1
+      ;;
     "Skip - don't use an AI tool")
       AI_CMD="skip"
       AI_CMD_NAME="none"
@@ -113,10 +123,12 @@ _install_ai_tool() {
 _resolve_ai_command() {
   local claude_available=false
   local codex_available=false
+  local gemini_available=false
 
   # Check which tools are available
   command -v claude &> /dev/null && claude_available=true
   command -v codex &> /dev/null && codex_available=true
+  command -v gemini &> /dev/null && gemini_available=true
 
   # Check for saved preference first
   local saved_pref=$(_load_ai_preference)
@@ -139,6 +151,14 @@ _resolve_ai_command() {
           return 0
         fi
         ;;
+      gemini)
+        if [[ "$gemini_available" == true ]]; then
+          AI_CMD="gemini --yolo"
+          AI_CMD_NAME="Gemini CLI"
+          AI_RESUME_CMD="gemini --resume"
+          return 0
+        fi
+        ;;
       skip)
         AI_CMD="skip"
         AI_CMD_NAME="none"
@@ -149,16 +169,26 @@ _resolve_ai_command() {
     # Fall through to normal selection
   fi
 
-  # If both are available, let user choose
-  if [[ "$claude_available" == true ]] && [[ "$codex_available" == true ]]; then
+  # Count available tools
+  local available_count=0
+  [[ "$claude_available" == true ]] && ((available_count++))
+  [[ "$codex_available" == true ]] && ((available_count++))
+  [[ "$gemini_available" == true ]] && ((available_count++))
+
+  # If multiple tools are available, let user choose
+  if [[ $available_count -gt 1 ]]; then
     echo ""
     gum style --foreground 6 "Multiple AI coding assistants detected!"
     echo ""
 
-    local choice=$(gum choose \
-      "Claude Code (Anthropic)" \
-      "Codex CLI (OpenAI)" \
-      "Skip - don't use an AI tool")
+    # Build menu options dynamically
+    local options=()
+    [[ "$claude_available" == true ]] && options+=("Claude Code (Anthropic)")
+    [[ "$codex_available" == true ]] && options+=("Codex CLI (OpenAI)")
+    [[ "$gemini_available" == true ]] && options+=("Gemini CLI (Google)")
+    options+=("Skip - don't use an AI tool")
+
+    local choice=$(gum choose "${options[@]}")
 
     case "$choice" in
       "Claude Code (Anthropic)")
@@ -170,6 +200,11 @@ _resolve_ai_command() {
         AI_CMD="codex --yolo"
         AI_CMD_NAME="Codex"
         AI_RESUME_CMD="codex resume --last"
+        ;;
+      "Gemini CLI (Google)")
+        AI_CMD="gemini --yolo"
+        AI_CMD_NAME="Gemini CLI"
+        AI_RESUME_CMD="gemini --resume"
         ;;
       "Skip - don't use an AI tool")
         AI_CMD="skip"
@@ -192,6 +227,10 @@ _resolve_ai_command() {
         "Codex CLI (OpenAI)")
           _save_ai_preference "codex"
           gum style --foreground 2 "Saved Codex as default"
+          ;;
+        "Gemini CLI (Google)")
+          _save_ai_preference "gemini"
+          gum style --foreground 2 "Saved Gemini CLI as default"
           ;;
         "Skip - don't use an AI tool")
           _save_ai_preference "skip"
@@ -219,7 +258,14 @@ _resolve_ai_command() {
     return 0
   fi
 
-  # Neither tool available - show installation menu
+  if [[ "$gemini_available" == true ]]; then
+    AI_CMD="gemini --yolo"
+    AI_CMD_NAME="Gemini CLI"
+    AI_RESUME_CMD="gemini --resume"
+    return 0
+  fi
+
+  # No tools available - show installation menu
   _install_ai_tool
   return $?
 }
