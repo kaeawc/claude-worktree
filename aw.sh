@@ -44,20 +44,184 @@ _aw_check_deps() {
 # AI Command Resolution
 # ============================================================================
 
-_resolve_ai_command() {
-  if ! command -v claude &> /dev/null; then
-    gum style --foreground 1 --bold "Error: claude command not found"
-    echo ""
-    echo "Claude Code CLI is required but not installed."
-    echo ""
-    echo "Install it with one of the following methods:"
-    echo "  • macOS:   brew install claude"
-    echo "  • npm:     npm install -g @anthropic-ai/claude-code"
-    echo ""
-    echo "For more information, visit: https://github.com/anthropics/claude-code"
-    return 1
+# Global variables for AI tool selection
+AI_CMD=""
+AI_CMD_NAME=""
+AI_RESUME_CMD=""
+
+# Config directory for storing preferences
+_AW_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/auto-worktree"
+_AW_PREF_FILE="$_AW_CONFIG_DIR/ai_tool_preference"
+
+# Load saved AI tool preference
+_load_ai_preference() {
+  if [[ -f "$_AW_PREF_FILE" ]]; then
+    cat "$_AW_PREF_FILE"
   fi
-  return 0
+}
+
+# Save AI tool preference
+_save_ai_preference() {
+  local tool="$1"
+  mkdir -p "$_AW_CONFIG_DIR"
+  echo "$tool" > "$_AW_PREF_FILE"
+}
+
+# Install AI tool via interactive menu
+_install_ai_tool() {
+  echo ""
+  gum style --foreground 3 "No AI coding assistant found."
+  echo ""
+
+  local choice=$(gum choose \
+    "Install Claude Code (Anthropic)" \
+    "Install Codex CLI (OpenAI)" \
+    "Skip - don't use an AI tool" \
+    "Cancel")
+
+  case "$choice" in
+    "Install Claude Code (Anthropic)")
+      echo ""
+      gum style --foreground 6 "Install Claude Code with one of the following methods:"
+      echo "  • macOS:   brew install claude"
+      echo "  • npm:     npm install -g @anthropic-ai/claude-code"
+      echo ""
+      echo "For more information, visit: https://github.com/anthropics/claude-code"
+      echo ""
+      return 1
+      ;;
+    "Install Codex CLI (OpenAI)")
+      echo ""
+      gum style --foreground 6 "Install Codex CLI with:"
+      echo "  • npm:     npm install -g @openai/codex-cli"
+      echo ""
+      echo "For more information, visit: https://github.com/openai/codex"
+      echo ""
+      return 1
+      ;;
+    "Skip - don't use an AI tool")
+      AI_CMD="skip"
+      AI_CMD_NAME="none"
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+_resolve_ai_command() {
+  local claude_available=false
+  local codex_available=false
+
+  # Check which tools are available
+  command -v claude &> /dev/null && claude_available=true
+  command -v codex &> /dev/null && codex_available=true
+
+  # Check for saved preference first
+  local saved_pref=$(_load_ai_preference)
+
+  if [[ -n "$saved_pref" ]]; then
+    case "$saved_pref" in
+      claude)
+        if [[ "$claude_available" == true ]]; then
+          AI_CMD="claude --dangerously-skip-permissions"
+          AI_CMD_NAME="Claude Code"
+          AI_RESUME_CMD="claude --dangerously-skip-permissions --continue"
+          return 0
+        fi
+        ;;
+      codex)
+        if [[ "$codex_available" == true ]]; then
+          AI_CMD="codex --yolo"
+          AI_CMD_NAME="Codex"
+          AI_RESUME_CMD="codex resume --last"
+          return 0
+        fi
+        ;;
+      skip)
+        AI_CMD="skip"
+        AI_CMD_NAME="none"
+        return 0
+        ;;
+    esac
+    # If we get here, saved preference is no longer valid (tool uninstalled)
+    # Fall through to normal selection
+  fi
+
+  # If both are available, let user choose
+  if [[ "$claude_available" == true ]] && [[ "$codex_available" == true ]]; then
+    echo ""
+    gum style --foreground 6 "Multiple AI coding assistants detected!"
+    echo ""
+
+    local choice=$(gum choose \
+      "Claude Code (Anthropic)" \
+      "Codex CLI (OpenAI)" \
+      "Skip - don't use an AI tool")
+
+    case "$choice" in
+      "Claude Code (Anthropic)")
+        AI_CMD="claude --dangerously-skip-permissions"
+        AI_CMD_NAME="Claude Code"
+        AI_RESUME_CMD="claude --dangerously-skip-permissions --continue"
+        ;;
+      "Codex CLI (OpenAI)")
+        AI_CMD="codex --yolo"
+        AI_CMD_NAME="Codex"
+        AI_RESUME_CMD="codex resume --last"
+        ;;
+      "Skip - don't use an AI tool")
+        AI_CMD="skip"
+        AI_CMD_NAME="none"
+        return 0
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+
+    # Ask if this choice should be saved
+    echo ""
+    if gum confirm "Save this as your default choice?"; then
+      case "$choice" in
+        "Claude Code (Anthropic)")
+          _save_ai_preference "claude"
+          gum style --foreground 2 "Saved Claude Code as default"
+          ;;
+        "Codex CLI (OpenAI)")
+          _save_ai_preference "codex"
+          gum style --foreground 2 "Saved Codex as default"
+          ;;
+        "Skip - don't use an AI tool")
+          _save_ai_preference "skip"
+          gum style --foreground 2 "Saved preference to skip AI tool"
+          ;;
+      esac
+      echo ""
+    fi
+
+    return 0
+  fi
+
+  # Only one tool available - use it
+  if [[ "$claude_available" == true ]]; then
+    AI_CMD="claude --dangerously-skip-permissions"
+    AI_CMD_NAME="Claude Code"
+    AI_RESUME_CMD="claude --dangerously-skip-permissions --continue"
+    return 0
+  fi
+
+  if [[ "$codex_available" == true ]]; then
+    AI_CMD="codex --yolo"
+    AI_CMD_NAME="Codex"
+    AI_RESUME_CMD="codex resume --last"
+    return 0
+  fi
+
+  # Neither tool available - show installation menu
+  _install_ai_tool
+  return $?
 }
 
 # ============================================================================
@@ -606,11 +770,15 @@ _aw_create_worktree() {
 
     _resolve_ai_command || return 1
 
-    gum style --foreground 2 "Starting Claude Code..."
-    if [[ -n "$initial_context" ]]; then
-      claude --dangerously-skip-permissions "$initial_context"
+    if [[ "$AI_CMD" != "skip" ]]; then
+      gum style --foreground 2 "Starting $AI_CMD_NAME..."
+      if [[ -n "$initial_context" ]]; then
+        $AI_CMD "$initial_context"
+      else
+        $AI_CMD
+      fi
     else
-      claude --dangerously-skip-permissions
+      gum style --foreground 3 "Skipping AI tool - worktree is ready for manual work"
     fi
   else
     gum style --foreground 1 "Failed to create worktree"
@@ -993,8 +1161,12 @@ _aw_pr() {
 
       _resolve_ai_command || return 1
 
-      gum style --foreground 2 "Starting Claude Code..."
-      claude --dangerously-skip-permissions
+      if [[ "$AI_CMD" != "skip" ]]; then
+        gum style --foreground 2 "Starting $AI_CMD_NAME..."
+        $AI_CMD
+      else
+        gum style --foreground 3 "Skipping AI tool - worktree is ready for manual work"
+      fi
       return 0
     else
       return 1
@@ -1017,8 +1189,12 @@ _aw_pr() {
 
       _resolve_ai_command || return 1
 
-      gum style --foreground 2 "Starting Claude Code for PR review..."
-      claude --dangerously-skip-permissions
+      if [[ "$AI_CMD" != "skip" ]]; then
+        gum style --foreground 2 "Starting $AI_CMD_NAME for PR review..."
+        $AI_CMD
+      else
+        gum style --foreground 3 "Skipping AI tool - worktree is ready for manual work"
+      fi
       return 0
     else
       gum style --foreground 6 "Creating detached worktree for PR review..."
@@ -1069,8 +1245,12 @@ _aw_pr() {
   _resolve_ai_command || return 1
 
   echo ""
-  gum style --foreground 2 "Starting Claude Code for PR review..."
-  claude --dangerously-skip-permissions
+  if [[ "$AI_CMD" != "skip" ]]; then
+    gum style --foreground 2 "Starting $AI_CMD_NAME for PR review..."
+    $AI_CMD
+  else
+    gum style --foreground 3 "Skipping AI tool - worktree is ready for manual work"
+  fi
 }
 
 # ============================================================================
@@ -1173,7 +1353,7 @@ _aw_resume() {
   fi
 
   echo ""
-  gum style --foreground 2 "Resuming Claude Code session in:"
+  gum style --foreground 2 "Resuming session in:"
   echo "  $selected_path"
   echo ""
 
@@ -1185,7 +1365,11 @@ _aw_resume() {
 
   _resolve_ai_command || return 1
 
-  claude --dangerously-skip-permissions --continue
+  if [[ "$AI_CMD" != "skip" ]]; then
+    $AI_RESUME_CMD
+  else
+    gum style --foreground 3 "Skipping AI tool - worktree is ready for manual work"
+  fi
 }
 
 # ============================================================================
