@@ -754,7 +754,7 @@ _aw_issue() {
       return 1
     fi
 
-    local selection=$(echo "$issues" | gum filter --height 20 --placeholder "Type to filter issues...")
+    local selection=$(echo "$issues" | gum filter --placeholder "Type to filter issues...")
 
     if [[ -z "$selection" ]]; then
       gum style --foreground 3 "Cancelled"
@@ -837,7 +837,7 @@ _aw_pr() {
       return 1
     fi
 
-    local selection=$(echo "$prs" | gum filter --height 20 --placeholder "Type to filter PRs... (✓=passing ✗=failing ○=pending)")
+    local selection=$(echo "$prs" | gum filter --placeholder "Type to filter PRs... (✓=passing ✗=failing ○=pending)")
 
     if [[ -z "$selection" ]]; then
       gum style --foreground 3 "Cancelled"
