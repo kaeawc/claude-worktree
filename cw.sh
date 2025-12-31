@@ -5,6 +5,7 @@
 # Usage:
 #   claude-worktree              # Interactive menu
 #   claude-worktree new          # Create new worktree
+#   claude-worktree resume       # Resume existing worktree
 #   claude-worktree issue [num]  # Work on a GitHub issue
 #   claude-worktree pr [num]     # Review a GitHub PR
 #   claude-worktree list         # List existing worktrees
@@ -941,6 +942,114 @@ _cw_pr() {
 }
 
 # ============================================================================
+# Resume worktree
+# ============================================================================
+
+_cw_resume() {
+  _cw_ensure_git_repo || return 1
+  _cw_get_repo_info
+  _cw_prune_worktrees
+
+  local worktree_list=$(git worktree list --porcelain 2>/dev/null | grep "^worktree " | sed 's/^worktree //')
+  local worktree_count=$(echo "$worktree_list" | grep -c . 2>/dev/null || echo 0)
+
+  if [[ $worktree_count -le 1 ]]; then
+    gum style --foreground 8 "No additional worktrees for $_CW_SOURCE_FOLDER"
+    return 0
+  fi
+
+  local now=$(date +%s)
+  local one_day=$((24 * 60 * 60))
+  local four_days=$((4 * 24 * 60 * 60))
+
+  # Build selection list with formatted display
+  local -a worktree_paths=()
+  local -a worktree_displays=()
+
+  while IFS= read -r wt_path; do
+    [[ "$wt_path" == "$_CW_GIT_ROOT" ]] && continue
+    [[ ! -d "$wt_path" ]] && continue
+
+    local wt_branch=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+    local commit_timestamp=$(git -C "$wt_path" log -1 --format=%ct 2>/dev/null)
+
+    if [[ -z "$commit_timestamp" ]] || ! [[ "$commit_timestamp" =~ ^[0-9]+$ ]]; then
+      commit_timestamp=$(find "$wt_path" -maxdepth 3 -type f -not -path '*/.git/*' -exec stat -f %m {} \; 2>/dev/null | sort -rn | head -1)
+    fi
+
+    # Build display string
+    local display="$(basename "$wt_path") ($wt_branch)"
+
+    if [[ -n "$commit_timestamp" ]] && [[ "$commit_timestamp" =~ ^[0-9]+$ ]]; then
+      local age=$((now - commit_timestamp))
+      local age_days=$((age / one_day))
+      local age_hours=$((age / 3600))
+
+      if [[ $age -lt $one_day ]]; then
+        display="$display [${age_hours}h ago]"
+      else
+        display="$display [${age_days}d ago]"
+      fi
+    fi
+
+    worktree_paths+=("$wt_path")
+    worktree_displays+=("$display")
+  done <<< "$worktree_list"
+
+  if [[ ${#worktree_paths[@]} -eq 0 ]]; then
+    gum style --foreground 8 "No additional worktrees for $_CW_SOURCE_FOLDER"
+    return 0
+  fi
+
+  echo ""
+  gum style --border rounded --padding "0 1" --border-foreground 4 \
+    "Resume a worktree for $_CW_SOURCE_FOLDER"
+  echo ""
+
+  # Create selection string from displays
+  local selection_list=""
+  local i=1
+  while [[ $i -le ${#worktree_displays[@]} ]]; do
+    selection_list+="${worktree_displays[$i]}"
+    if [[ $i -lt ${#worktree_displays[@]} ]]; then
+      selection_list+=$'\n'
+    fi
+    ((i++))
+  done
+
+  local selected=$(echo "$selection_list" | gum filter --placeholder "Select worktree to resume...")
+
+  if [[ -z "$selected" ]]; then
+    gum style --foreground 3 "Cancelled"
+    return 0
+  fi
+
+  # Find the corresponding path
+  local selected_path=""
+  local i=1
+  while [[ $i -le ${#worktree_displays[@]} ]]; do
+    if [[ "${worktree_displays[$i]}" == "$selected" ]]; then
+      selected_path="${worktree_paths[$i]}"
+      break
+    fi
+    ((i++))
+  done
+
+  if [[ -z "$selected_path" ]]; then
+    gum style --foreground 1 "Error: Could not find selected worktree"
+    return 1
+  fi
+
+  echo ""
+  gum style --foreground 2 "Resuming Claude Code session in:"
+  echo "  $selected_path"
+  echo ""
+
+  cd "$selected_path" || return 1
+  claude --dangerously-skip-permissions --continue
+}
+
+# ============================================================================
 # Main menu
 # ============================================================================
 
@@ -955,15 +1064,17 @@ _cw_menu() {
 
   local choice=$(gum choose \
     "New worktree" \
+    "Resume worktree" \
     "Work on issue" \
     "Review PR" \
     "Cancel")
 
   case "$choice" in
-    "New worktree")   _cw_new true ;;
-    "Work on issue")  _cw_issue ;;
-    "Review PR")      _cw_pr ;;
-    *)                return 0 ;;
+    "New worktree")    _cw_new true ;;
+    "Resume worktree") _cw_resume ;;
+    "Work on issue")   _cw_issue ;;
+    "Review PR")       _cw_pr ;;
+    *)                 return 0 ;;
   esac
 }
 
@@ -975,15 +1086,17 @@ claude-worktree() {
   _cw_check_deps || return 1
 
   case "${1:-}" in
-    new)   shift; _cw_new "$@" ;;
-    issue) shift; _cw_issue "$@" ;;
-    pr)    shift; _cw_pr "$@" ;;
-    list)  shift; _cw_list ;;
+    new)    shift; _cw_new "$@" ;;
+    issue)  shift; _cw_issue "$@" ;;
+    pr)     shift; _cw_pr "$@" ;;
+    resume) shift; _cw_resume ;;
+    list)   shift; _cw_list ;;
     help|--help|-h)
       echo "Usage: claude-worktree [command] [args]"
       echo ""
       echo "Commands:"
       echo "  new           Create a new worktree"
+      echo "  resume        Resume an existing worktree"
       echo "  issue [num]   Work on a GitHub issue"
       echo "  pr [num]      Review a GitHub pull request"
       echo "  list          List existing worktrees"
@@ -1007,6 +1120,7 @@ _claude_worktree() {
   local -a commands
   commands=(
     'new:Create a new worktree'
+    'resume:Resume an existing worktree'
     'issue:Work on a GitHub issue'
     'pr:Review a GitHub pull request'
     'list:List existing worktrees'
