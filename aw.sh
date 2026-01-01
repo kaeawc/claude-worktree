@@ -6,14 +6,16 @@
 #   auto-worktree                    # Interactive menu
 #   auto-worktree new                # Create new worktree
 #   auto-worktree resume             # Resume existing worktree
-#   auto-worktree issue [id]         # Work on an issue (GitHub #123 or JIRA PROJ-123)
-#   auto-worktree pr [num]           # Review a GitHub PR
+#   auto-worktree issue [id]         # Work on an issue (GitHub #123, GitLab #456, or JIRA PROJ-123)
+#   auto-worktree pr [num]           # Review a GitHub PR or GitLab MR
 #   auto-worktree list               # List existing worktrees
 #
 # Configuration (per-repository via git config):
-#   git config auto-worktree.issue-provider github|jira  # Set issue provider
-#   git config auto-worktree.jira-server <URL>           # Set JIRA server URL
-#   git config auto-worktree.jira-project <KEY>          # Set default JIRA project
+#   git config auto-worktree.issue-provider github|gitlab|jira  # Set issue provider
+#   git config auto-worktree.jira-server <URL>                  # Set JIRA server URL
+#   git config auto-worktree.jira-project <KEY>                 # Set default JIRA project
+#   git config auto-worktree.gitlab-server <URL>                # Set GitLab server URL (for self-hosted)
+#   git config auto-worktree.gitlab-project <GROUP/PROJECT>     # Set default GitLab project path
 
 # ============================================================================
 # Dependencies check
@@ -53,6 +55,20 @@ _aw_check_issue_provider_deps() {
       if ! command -v gh &> /dev/null; then
         gum style --foreground 1 "Error: GitHub CLI (gh) is required for GitHub issue integration"
         echo "Install with: brew install gh"
+        return 1
+      fi
+      ;;
+    "gitlab")
+      if ! command -v glab &> /dev/null; then
+        gum style --foreground 1 "Error: GitLab CLI (glab) is required for GitLab issue integration"
+        echo ""
+        echo "Install with:"
+        echo "  • macOS:     brew install glab"
+        echo "  • Linux:     See https://gitlab.com/gitlab-org/cli#installation"
+        echo "  • Windows:   scoop install glab"
+        echo ""
+        echo "After installation, authenticate with GitLab:"
+        echo "  glab auth login"
         return 1
       fi
       ;;
@@ -598,8 +614,8 @@ _aw_set_issue_provider() {
   # Set the issue provider for this repository
   local provider="$1"
 
-  if [[ "$provider" != "github" ]] && [[ "$provider" != "jira" ]]; then
-    gum style --foreground 1 "Error: Invalid provider. Must be 'github' or 'jira'"
+  if [[ "$provider" != "github" ]] && [[ "$provider" != "jira" ]] && [[ "$provider" != "gitlab" ]]; then
+    gum style --foreground 1 "Error: Invalid provider. Must be 'github', 'gitlab', or 'jira'"
     return 1
   fi
 
@@ -629,6 +645,30 @@ _aw_set_jira_project() {
   local project="$1"
   git config auto-worktree.jira-project "$project"
   gum style --foreground 2 "✓ JIRA project set to: $project"
+}
+
+_aw_get_gitlab_server() {
+  # Get the configured GitLab server URL
+  git config --get auto-worktree.gitlab-server 2>/dev/null || echo ""
+}
+
+_aw_set_gitlab_server() {
+  # Set the GitLab server URL for this repository
+  local server="$1"
+  git config auto-worktree.gitlab-server "$server"
+  gum style --foreground 2 "✓ GitLab server set to: $server"
+}
+
+_aw_get_gitlab_project() {
+  # Get the configured default GitLab project path
+  git config --get auto-worktree.gitlab-project 2>/dev/null || echo ""
+}
+
+_aw_set_gitlab_project() {
+  # Set the default GitLab project path for this repository
+  local project="$1"
+  git config auto-worktree.gitlab-project "$project"
+  gum style --foreground 2 "✓ GitLab project set to: $project"
 }
 
 _aw_configure_jira() {
@@ -668,6 +708,40 @@ _aw_configure_jira() {
   echo ""
 }
 
+_aw_configure_gitlab() {
+  # Interactive configuration for GitLab
+  echo ""
+  gum style --foreground 6 "Configure GitLab for this repository"
+  echo ""
+
+  # Get GitLab server URL
+  local current_server=$(_aw_get_gitlab_server)
+  local server=$(gum input --placeholder "https://gitlab.com (or https://gitlab.example.com for self-hosted)" \
+    --value "$current_server" \
+    --header "GitLab Server URL (leave empty for gitlab.com default):")
+
+  if [[ -n "$server" ]]; then
+    _aw_set_gitlab_server "$server"
+  fi
+
+  # Get default GitLab project path
+  local current_project=$(_aw_get_gitlab_project)
+  local project=$(gum input --placeholder "group/project" \
+    --value "$current_project" \
+    --header "Default GitLab Project Path (optional, can filter issues/MRs):")
+
+  if [[ -n "$project" ]]; then
+    _aw_set_gitlab_project "$project"
+  fi
+
+  echo ""
+  gum style --foreground 2 "GitLab configuration complete!"
+  echo ""
+  echo "Note: Make sure you've authenticated with the GitLab CLI:"
+  echo "  glab auth login"
+  echo ""
+}
+
 _aw_prompt_issue_provider() {
   # Prompt user to choose issue provider if not configured
   echo ""
@@ -676,12 +750,17 @@ _aw_prompt_issue_provider() {
 
   local choice=$(gum choose \
     "GitHub Issues" \
+    "GitLab Issues" \
     "JIRA" \
     "Cancel")
 
   case "$choice" in
     "GitHub Issues")
       _aw_set_issue_provider "github"
+      ;;
+    "GitLab Issues")
+      _aw_set_issue_provider "gitlab"
+      _aw_configure_gitlab
       ;;
     "JIRA")
       _aw_set_issue_provider "jira"
@@ -920,8 +999,8 @@ _aw_extract_jira_key() {
 }
 
 _aw_extract_issue_id() {
-  # Extract either GitHub issue number or JIRA key from branch name
-  # Returns the ID and sets _AW_DETECTED_ISSUE_TYPE to "github" or "jira"
+  # Extract either GitHub/GitLab issue number or JIRA key from branch name
+  # Returns the ID and sets _AW_DETECTED_ISSUE_TYPE to "github", "gitlab", or "jira"
   local branch="$1"
 
   # Try JIRA key first (more specific pattern)
@@ -932,10 +1011,17 @@ _aw_extract_issue_id() {
     return 0
   fi
 
-  # Try GitHub issue number
+  # Try GitHub/GitLab issue number
+  # Both use numeric IDs, so we rely on configured provider to distinguish
   local issue_num=$(_aw_extract_issue_number "$branch")
   if [[ -n "$issue_num" ]]; then
-    _AW_DETECTED_ISSUE_TYPE="github"
+    # Check configured provider to determine type
+    local provider=$(_aw_get_issue_provider)
+    if [[ "$provider" == "gitlab" ]]; then
+      _AW_DETECTED_ISSUE_TYPE="gitlab"
+    else
+      _AW_DETECTED_ISSUE_TYPE="github"
+    fi
     echo "$issue_num"
     return 0
   fi
@@ -1117,6 +1203,217 @@ _aw_jira_get_issue_details() {
   return 0
 }
 
+# ============================================================================
+# GitLab integration functions
+# ============================================================================
+
+_aw_gitlab_check_closed() {
+  # Check if a GitLab issue or MR is closed/merged
+  # Returns 0 if closed/merged, 1 if open or error
+  local id="$1"
+  local type="${2:-issue}"  # 'issue' or 'mr'
+
+  if [[ -z "$id" ]]; then
+    return 1
+  fi
+
+  # Build glab command with server option if configured
+  local glab_cmd="glab"
+  local server=$(_aw_get_gitlab_server)
+  if [[ -n "$server" ]]; then
+    glab_cmd="glab --host $server"
+  fi
+
+  # Get state using glab CLI
+  local state
+  if [[ "$type" == "mr" ]]; then
+    state=$($glab_cmd mr view "$id" --json state --jq '.state' 2>/dev/null)
+  else
+    state=$($glab_cmd issue view "$id" --json state --jq '.state' 2>/dev/null)
+  fi
+
+  if [[ -z "$state" ]]; then
+    return 1
+  fi
+
+  # GitLab states: "opened", "closed", "merged" (for MRs)
+  case "$state" in
+    closed|merged)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+_aw_gitlab_list_issues() {
+  # List GitLab issues
+  # Returns formatted issue list similar to GitHub issues
+  local project=$(_aw_get_gitlab_project)
+
+  # Build glab command with server option if configured
+  local glab_cmd="glab"
+  local server=$(_aw_get_gitlab_server)
+  if [[ -n "$server" ]]; then
+    glab_cmd="glab --host $server"
+  fi
+
+  # Add project filter if configured
+  local project_args=""
+  if [[ -n "$project" ]]; then
+    project_args="--repo $project"
+  fi
+
+  # List open issues with glab
+  $glab_cmd issue list --state opened --per-page 100 $project_args 2>/dev/null | \
+    awk -F'\t' '{
+      # glab output format: #NUMBER  TITLE  (LABELS)  (TIME)
+      # Extract issue number, title, and labels
+      if ($1 ~ /^#[0-9]+/) {
+        number = $1
+        title = $2
+        labels = $3
+
+        # Format: #123 | Title | [label1][label2]
+        printf "%s | %s", number, title
+        if (labels != "" && labels != "()") {
+          # Clean up labels format
+          gsub(/[()]/, "", labels)
+          gsub(/, /, "][", labels)
+          printf " | [%s]", labels
+        }
+        printf "\n"
+      }
+    }'
+}
+
+_aw_gitlab_get_issue_details() {
+  # Get GitLab issue details
+  # Sets variables: title, body (description)
+  local issue_id="$1"
+
+  if [[ -z "$issue_id" ]]; then
+    return 1
+  fi
+
+  # Build glab command with server option if configured
+  local glab_cmd="glab"
+  local server=$(_aw_get_gitlab_server)
+  if [[ -n "$server" ]]; then
+    glab_cmd="glab --host $server"
+  fi
+
+  # Get issue details in JSON format
+  local issue_json=$($glab_cmd issue view "$issue_id" --json title,description 2>/dev/null)
+
+  if [[ -z "$issue_json" ]]; then
+    return 1
+  fi
+
+  # Extract title and description using jq
+  title=$(echo "$issue_json" | jq -r '.title // ""')
+  body=$(echo "$issue_json" | jq -r '.description // ""')
+
+  return 0
+}
+
+_aw_gitlab_list_mrs() {
+  # List GitLab merge requests
+  # Returns formatted MR list similar to GitHub PRs
+  local project=$(_aw_get_gitlab_project)
+
+  # Build glab command with server option if configured
+  local glab_cmd="glab"
+  local server=$(_aw_get_gitlab_server)
+  if [[ -n "$server" ]]; then
+    glab_cmd="glab --host $server"
+  fi
+
+  # Add project filter if configured
+  local project_args=""
+  if [[ -n "$project" ]]; then
+    project_args="--repo $project"
+  fi
+
+  # List open MRs with glab
+  $glab_cmd mr list --state opened --per-page 100 $project_args 2>/dev/null | \
+    awk -F'\t' '{
+      # glab output format: !NUMBER  TITLE  (BRANCH)  (TIME)
+      # Extract MR number, title, and branch
+      if ($1 ~ /^![0-9]+/) {
+        number = $1
+        title = $2
+        branch = $3
+
+        # Format: !123 | Title | (branch-name)
+        printf "%s | %s", number, title
+        if (branch != "") {
+          printf " | %s", branch
+        }
+        printf "\n"
+      }
+    }'
+}
+
+_aw_gitlab_get_mr_details() {
+  # Get GitLab MR details
+  # Sets variables: title, body (description), source_branch, target_branch
+  local mr_id="$1"
+
+  if [[ -z "$mr_id" ]]; then
+    return 1
+  fi
+
+  # Build glab command with server option if configured
+  local glab_cmd="glab"
+  local server=$(_aw_get_gitlab_server)
+  if [[ -n "$server" ]]; then
+    glab_cmd="glab --host $server"
+  fi
+
+  # Get MR details in JSON format
+  local mr_json=$($glab_cmd mr view "$mr_id" --json title,description,sourceBranch,targetBranch 2>/dev/null)
+
+  if [[ -z "$mr_json" ]]; then
+    return 1
+  fi
+
+  # Extract details using jq
+  title=$(echo "$mr_json" | jq -r '.title // ""')
+  body=$(echo "$mr_json" | jq -r '.description // ""')
+  source_branch=$(echo "$mr_json" | jq -r '.sourceBranch // ""')
+  target_branch=$(echo "$mr_json" | jq -r '.targetBranch // ""')
+
+  return 0
+}
+
+_aw_gitlab_check_mr_merged() {
+  # Check if a GitLab MR is merged for a given branch
+  # Returns 0 if merged, 1 if not merged or error
+  local branch_name="$1"
+
+  if [[ -z "$branch_name" ]]; then
+    return 1
+  fi
+
+  # Build glab command with server option if configured
+  local glab_cmd="glab"
+  local server=$(_aw_get_gitlab_server)
+  if [[ -n "$server" ]]; then
+    glab_cmd="glab --host $server"
+  fi
+
+  # Check if there's a merged MR for this branch
+  local mr_state=$($glab_cmd mr view "$branch_name" --json state 2>/dev/null | jq -r '.state')
+
+  if [[ "$mr_state" == "merged" ]]; then
+    return 0
+  fi
+
+  return 1
+}
+
 _aw_has_unpushed_commits() {
   # Check if a worktree has unpushed commits
   # Returns 0 if there are unpushed commits, 1 if not
@@ -1287,6 +1584,22 @@ _aw_list() {
           merge_reason="JIRA $issue_id"
           merged_indicator=" $(gum style --foreground 5 "[resolved $issue_id]")"
         fi
+      elif [[ "$_AW_DETECTED_ISSUE_TYPE" == "gitlab" ]]; then
+        # Check if GitLab issue is closed
+        if _aw_gitlab_check_closed "$issue_id" "issue"; then
+          # Check for unpushed commits
+          if _aw_has_unpushed_commits "$wt_path"; then
+            # Has unpushed work - mark as closed but with warning
+            is_merged=true
+            merge_reason="issue #$issue_id closed (⚠ $_AW_UNPUSHED_COUNT unpushed)"
+            merged_indicator=" $(gum style --foreground 3 "[closed #$issue_id ⚠]")"
+          else
+            # No unpushed work - safe to clean up
+            is_merged=true
+            merge_reason="issue #$issue_id closed"
+            merged_indicator=" $(gum style --foreground 5 "[closed #$issue_id]")"
+          fi
+        fi
       elif [[ "$_AW_DETECTED_ISSUE_TYPE" == "github" ]]; then
         # Check if GitHub issue is merged
         if _aw_check_issue_merged "$issue_id"; then
@@ -1313,11 +1626,22 @@ _aw_list() {
       fi
     fi
 
-    # Also check for merged PRs if no issue was detected
-    if [[ "$is_merged" == "false" ]] && _aw_check_branch_pr_merged "$wt_branch"; then
-      is_merged=true
-      merge_reason="PR"
-      merged_indicator=" $(gum style --foreground 5 "[PR merged]")"
+    # Also check for merged PRs/MRs if no issue was detected
+    if [[ "$is_merged" == "false" ]]; then
+      # Check for GitLab MRs (mr-{number} pattern in path)
+      if [[ "$wt_path" =~ mr-([0-9]+) ]]; then
+        local mr_num="${BASH_REMATCH[1]}"
+        if _aw_gitlab_check_closed "$mr_num" "mr"; then
+          is_merged=true
+          merge_reason="MR"
+          merged_indicator=" $(gum style --foreground 5 "[MR merged]")"
+        fi
+      # Check for GitHub PRs
+      elif _aw_check_branch_pr_merged "$wt_branch"; then
+        is_merged=true
+        merge_reason="PR"
+        merged_indicator=" $(gum style --foreground 5 "[PR merged]")"
+      fi
     fi
 
     if [[ "$is_merged" == "true" ]]; then
@@ -1490,7 +1814,7 @@ _aw_issue() {
   # Check for provider-specific dependencies
   _aw_check_issue_provider_deps "$provider" || return 1
 
-  # Detect if argument is GitHub issue number or JIRA key
+  # Detect if argument is GitHub/GitLab issue number or JIRA key
   local issue_id="${1:-}"
   local issue_type=""
 
@@ -1499,19 +1823,20 @@ _aw_issue() {
     if [[ "$issue_id" =~ ^[A-Z][A-Z0-9]+-[0-9]+$ ]]; then
       issue_type="jira"
     elif [[ "$issue_id" =~ ^[0-9]+$ ]]; then
-      issue_type="github"
+      # Both GitHub and GitLab use numbers, so use the configured provider
+      issue_type="$provider"
     else
-      gum style --foreground 1 "Invalid issue format. Expected: GitHub number (e.g., 123) or JIRA key (e.g., PROJ-123)"
+      gum style --foreground 1 "Invalid issue format. Expected: issue number (e.g., 123) or JIRA key (e.g., PROJ-123)"
       return 1
     fi
 
-    # Validate issue type matches provider
-    if [[ "$issue_type" != "$provider" ]]; then
-      gum style --foreground 3 "Warning: This repository is configured for $provider, but you provided a $issue_type issue ID"
+    # Validate issue type matches provider (only warn for JIRA mismatch)
+    if [[ "$issue_type" == "jira" ]] && [[ "$provider" != "jira" ]]; then
+      gum style --foreground 3 "Warning: This repository is configured for $provider, but you provided a JIRA issue ID"
       if ! gum confirm "Continue anyway?"; then
         return 0
       fi
-      provider="$issue_type"
+      provider="jira"
     fi
   fi
 
@@ -1521,6 +1846,8 @@ _aw_issue() {
     local issues=""
     if [[ "$provider" == "jira" ]]; then
       issues=$(_aw_jira_list_issues)
+    elif [[ "$provider" == "gitlab" ]]; then
+      issues=$(_aw_gitlab_list_issues)
     else
       issues=$(gh issue list --limit 100 --state open --json number,title,labels \
         --template '{{range .}}#{{.number}} | {{.title}}{{if .labels}} |{{range .labels}} [{{.name}}]{{end}}{{end}}{{"\n"}}{{end}}' 2>/dev/null)
@@ -1529,6 +1856,8 @@ _aw_issue() {
     if [[ -z "$issues" ]]; then
       if [[ "$provider" == "jira" ]]; then
         gum style --foreground 1 "No open JIRA issues found"
+      elif [[ "$provider" == "gitlab" ]]; then
+        gum style --foreground 1 "No open GitLab issues found"
       else
         gum style --foreground 1 "No open GitHub issues found"
       fi
@@ -1546,6 +1875,7 @@ _aw_issue() {
             if [[ "$provider" == "jira" ]]; then
               local wt_issue=$(_aw_extract_jira_key "$wt_branch")
             else
+              # Both GitHub and GitLab use issue numbers
               local wt_issue=$(_aw_extract_issue_number "$wt_branch")
             fi
             if [[ -n "$wt_issue" ]]; then
@@ -1655,6 +1985,11 @@ _aw_issue() {
   if [[ "$provider" == "jira" ]]; then
     _aw_jira_get_issue_details "$issue_id" || {
       gum style --foreground 1 "Could not fetch JIRA issue $issue_id"
+      return 1
+    }
+  elif [[ "$provider" == "gitlab" ]]; then
+    _aw_gitlab_get_issue_details "$issue_id" || {
+      gum style --foreground 1 "Could not fetch GitLab issue #$issue_id"
       return 1
     }
   else
@@ -1794,43 +2129,83 @@ _aw_pr() {
   _aw_ensure_git_repo || return 1
   _aw_get_repo_info
 
+  # Determine provider - check if GitLab is configured, otherwise assume GitHub
+  local provider=$(_aw_get_issue_provider)
+  if [[ -z "$provider" ]] || [[ "$provider" == "jira" ]]; then
+    # Default to GitHub for PR workflow, or detect from remote
+    provider="github"
+  fi
+
+  # Check for provider-specific dependencies
+  _aw_check_issue_provider_deps "$provider" || return 1
+
   local pr_num="${1:-}"
 
   if [[ -z "$pr_num" ]]; then
-    gum spin --spinner dot --title "Fetching pull requests..." -- sleep 0.1
+    if [[ "$provider" == "gitlab" ]]; then
+      gum spin --spinner dot --title "Fetching merge requests..." -- sleep 0.1
+    else
+      gum spin --spinner dot --title "Fetching pull requests..." -- sleep 0.1
+    fi
 
-    local prs=$(gh pr list --limit 100 --state open --json number,title,author,headRefName,baseRefName,labels,statusCheckRollup 2>/dev/null | \
-      jq -r '.[] | "#\(.number) | \(
-        if (.statusCheckRollup | length == 0) then "○"
-        elif (.statusCheckRollup | all(.state == "SUCCESS")) then "✓"
-        elif (.statusCheckRollup | any(.state == "FAILURE" or .state == "ERROR")) then "✗"
-        else "○"
-        end
-      ) | \(.title) | @\(.author.login)\(
-        if (.labels | length > 0) then " |" + ([.labels[].name] | map(" [\(.)]") | join(""))
-        else ""
-        end
-      ) | \(.headRefName)"')
+    local prs=""
+    if [[ "$provider" == "gitlab" ]]; then
+      # List GitLab MRs
+      local gitlab_server=$(_aw_get_gitlab_server)
+      local glab_cmd="glab"
+      if [[ -n "$gitlab_server" ]]; then
+        glab_cmd="glab --host $gitlab_server"
+      fi
+
+      prs=$($glab_cmd mr list --state opened --per-page 100 2>/dev/null | \
+        awk -F'\t' '{
+          if ($1 ~ /^![0-9]+/) {
+            number = substr($1, 2)  # Remove ! prefix
+            title = $2
+            branch = $3
+            gsub(/[()]/, "", branch)  # Remove parentheses
+            printf "#%s | ○ | %s | %s\n", number, title, branch
+          }
+        }')
+    else
+      # List GitHub PRs
+      prs=$(gh pr list --limit 100 --state open --json number,title,author,headRefName,baseRefName,labels,statusCheckRollup 2>/dev/null | \
+        jq -r '.[] | "#\(.number) | \(
+          if (.statusCheckRollup | length == 0) then "○"
+          elif (.statusCheckRollup | all(.state == "SUCCESS")) then "✓"
+          elif (.statusCheckRollup | any(.state == "FAILURE" or .state == "ERROR")) then "✗"
+          else "○"
+          end
+        ) | \(.title) | @\(.author.login)\(
+          if (.labels | length > 0) then " |" + ([.labels[].name] | map(" [\(.)]") | join(""))
+          else ""
+          end
+        ) | \(.headRefName)"')
+    fi
 
     if [[ -z "$prs" ]]; then
-      gum style --foreground 1 "No open PRs found or not in a GitHub repository"
+      if [[ "$provider" == "gitlab" ]]; then
+        gum style --foreground 1 "No open MRs found or not in a GitLab repository"
+      else
+        gum style --foreground 1 "No open PRs found or not in a GitHub repository"
+      fi
       return 1
     fi
 
-    # Detect which PRs have active worktrees
+    # Detect which PRs/MRs have active worktrees
     local active_prs=()
     local worktree_list=$(git worktree list --porcelain 2>/dev/null | grep "^worktree " | sed 's/^worktree //')
     if [[ -n "$worktree_list" ]]; then
       while IFS= read -r wt_path; do
         if [[ -d "$wt_path" ]]; then
           local wt_branch=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-          # Check if worktree path contains pr-{number} pattern
-          if [[ "$wt_path" =~ pr-([0-9]+) ]]; then
-            active_prs+=("${BASH_REMATCH[1]}")
+          # Check if worktree path contains pr-{number} or mr-{number} pattern
+          if [[ "$wt_path" =~ (pr|mr)-([0-9]+) ]]; then
+            active_prs+=("${BASH_REMATCH[2]}")
           fi
-          # Also check by branch name in case PR uses the actual head branch
+          # Also check by branch name in case PR/MR uses the actual head branch
           if [[ -n "$wt_branch" ]]; then
-            # Extract PR number from branch in prs data
+            # Extract PR/MR number from branch in prs data
             local matching_pr=$(echo "$prs" | grep -E " \| ${wt_branch}\$" | sed 's/^#//' | cut -d'|' -f1 | tr -d ' ')
             if [[ -n "$matching_pr" ]]; then
               active_prs+=("$matching_pr")
@@ -1864,7 +2239,11 @@ _aw_pr() {
       fi
     done <<< "$prs"
 
-    local selection=$(echo "$highlighted_prs" | gum filter --placeholder "Type to filter PRs... (● = active worktree, ✓=passing ✗=failing ○=pending)")
+    if [[ "$provider" == "gitlab" ]]; then
+      local selection=$(echo "$highlighted_prs" | gum filter --placeholder "Type to filter MRs... (● = active worktree, ○=pending)")
+    else
+      local selection=$(echo "$highlighted_prs" | gum filter --placeholder "Type to filter PRs... (● = active worktree, ✓=passing ✗=failing ○=pending)")
+    fi
 
     if [[ -z "$selection" ]]; then
       gum style --foreground 3 "Cancelled"
@@ -1874,25 +2253,54 @@ _aw_pr() {
     pr_num=$(echo "$selection" | sed 's/^● *//' | sed 's/^#//' | cut -d'|' -f1 | tr -d ' ')
   fi
 
-  # Get PR details
-  local pr_data=$(gh pr view "$pr_num" --json number,title,headRefName,baseRefName,author 2>/dev/null)
+  # Get PR/MR details
+  local title=""
+  local head_ref=""
+  local base_ref=""
+  local author=""
 
-  if [[ -z "$pr_data" ]]; then
-    gum style --foreground 1 "Could not fetch PR #$pr_num"
-    return 1
+  if [[ "$provider" == "gitlab" ]]; then
+    local gitlab_server=$(_aw_get_gitlab_server)
+    local glab_cmd="glab"
+    if [[ -n "$gitlab_server" ]]; then
+      glab_cmd="glab --host $gitlab_server"
+    fi
+
+    local mr_data=$($glab_cmd mr view "$pr_num" --json title,sourceBranch,targetBranch,author 2>/dev/null)
+
+    if [[ -z "$mr_data" ]]; then
+      gum style --foreground 1 "Could not fetch MR !$pr_num"
+      return 1
+    fi
+
+    title=$(echo "$mr_data" | jq -r '.title')
+    head_ref=$(echo "$mr_data" | jq -r '.sourceBranch')
+    base_ref=$(echo "$mr_data" | jq -r '.targetBranch')
+    author=$(echo "$mr_data" | jq -r '.author.username // .author.login // ""')
+  else
+    local pr_data=$(gh pr view "$pr_num" --json number,title,headRefName,baseRefName,author 2>/dev/null)
+
+    if [[ -z "$pr_data" ]]; then
+      gum style --foreground 1 "Could not fetch PR #$pr_num"
+      return 1
+    fi
+
+    title=$(echo "$pr_data" | jq -r '.title')
+    head_ref=$(echo "$pr_data" | jq -r '.headRefName')
+    base_ref=$(echo "$pr_data" | jq -r '.baseRefName')
+    author=$(echo "$pr_data" | jq -r '.author.login')
   fi
 
-  local title=$(echo "$pr_data" | jq -r '.title')
-  local head_ref=$(echo "$pr_data" | jq -r '.headRefName')
-  local base_ref=$(echo "$pr_data" | jq -r '.baseRefName')
-  local author=$(echo "$pr_data" | jq -r '.author.login')
-
-  # Check if a worktree already exists for this PR
+  # Check if a worktree already exists for this PR/MR
   local existing_worktree=""
-  local worktree_name="pr-${pr_num}"
+  local worktree_prefix="pr"
+  if [[ "$provider" == "gitlab" ]]; then
+    worktree_prefix="mr"
+  fi
+  local worktree_name="${worktree_prefix}-${pr_num}"
   local worktree_path="$_AW_WORKTREE_BASE/$worktree_name"
 
-  # First check the standard pr-{number} path
+  # First check the standard pr-{number} or mr-{number} path
   if [[ -d "$worktree_path" ]]; then
     existing_worktree="$worktree_path"
   else
@@ -1900,18 +2308,26 @@ _aw_pr() {
     existing_worktree=$(git worktree list --porcelain 2>/dev/null | grep -A2 "^worktree " | grep -B1 "branch refs/heads/${head_ref}$" | head -1 | sed 's/^worktree //')
   fi
 
-  # If an active worktree exists for this PR, offer to resume it
+  # If an active worktree exists for this PR/MR, offer to resume it
   if [[ -n "$existing_worktree" ]]; then
     echo ""
-    gum style --foreground 3 "Active worktree found for PR #$pr_num:"
+    if [[ "$provider" == "gitlab" ]]; then
+      gum style --foreground 3 "Active worktree found for MR !$pr_num:"
+    else
+      gum style --foreground 3 "Active worktree found for PR #$pr_num:"
+    fi
     echo "  $existing_worktree"
     echo ""
 
     if gum confirm "Resume existing worktree?"; then
       cd "$existing_worktree" || return 1
 
-      # Set terminal title for GitHub PR
-      printf '\033]0;GitHub PR #%s - %s\007' "$pr_num" "$title"
+      # Set terminal title
+      if [[ "$provider" == "gitlab" ]]; then
+        printf '\033]0;GitLab MR !%s - %s\007' "$pr_num" "$title"
+      else
+        printf '\033]0;GitHub PR #%s - %s\007' "$pr_num" "$title"
+      fi
 
       _resolve_ai_command || return 1
 
@@ -1930,27 +2346,49 @@ _aw_pr() {
   fi
 
   echo ""
-  gum style --border rounded --padding "0 1" --border-foreground 5 -- \
-    "PR #${pr_num} by @${author}" \
-    "$title" \
-    "" \
-    "$head_ref -> $base_ref"
+  if [[ "$provider" == "gitlab" ]]; then
+    gum style --border rounded --padding "0 1" --border-foreground 5 -- \
+      "MR !${pr_num} by @${author}" \
+      "$title" \
+      "" \
+      "$head_ref -> $base_ref"
+  else
+    gum style --border rounded --padding "0 1" --border-foreground 5 -- \
+      "PR #${pr_num} by @${author}" \
+      "$title" \
+      "" \
+      "$head_ref -> $base_ref"
+  fi
 
-  # Create worktree for the PR
+  # Create worktree for the PR/MR
   mkdir -p "$_AW_WORKTREE_BASE"
 
-  # Fetch the PR branch and create worktree with proper tracking
-  gum spin --spinner dot --title "Fetching PR branch..." -- git fetch origin "pull/${pr_num}/head:${head_ref}" 2>/dev/null || \
-    git fetch origin "${head_ref}:${head_ref}" 2>/dev/null
+  # Fetch the PR/MR branch and create worktree with proper tracking
+  if [[ "$provider" == "gitlab" ]]; then
+    gum spin --spinner dot --title "Fetching MR branch..." -- git fetch origin "merge-requests/${pr_num}/head:${head_ref}" 2>/dev/null || \
+      git fetch origin "${head_ref}:${head_ref}" 2>/dev/null
+  else
+    gum spin --spinner dot --title "Fetching PR branch..." -- git fetch origin "pull/${pr_num}/head:${head_ref}" 2>/dev/null || \
+      git fetch origin "${head_ref}:${head_ref}" 2>/dev/null
+  fi
 
-  # Create worktree with the PR branch
+  # Create worktree with the PR/MR branch
   if ! gum spin --spinner dot --title "Creating worktree..." -- git worktree add "$worktree_path" "$head_ref" 2>/dev/null; then
     # If failed (likely because branch is already checked out elsewhere), try detached
-    gum style --foreground 6 "Branch already in use, creating detached worktree for PR review..."
+    if [[ "$provider" == "gitlab" ]]; then
+      gum style --foreground 6 "Branch already in use, creating detached worktree for MR review..."
 
-    if ! gum spin --spinner dot --title "Fetching PR..." -- git fetch origin "pull/${pr_num}/head" 2>/dev/null; then
-      gum style --foreground 1 "Failed to fetch PR"
-      return 1
+      if ! gum spin --spinner dot --title "Fetching MR..." -- git fetch origin "merge-requests/${pr_num}/head" 2>/dev/null; then
+        gum style --foreground 1 "Failed to fetch MR"
+        return 1
+      fi
+    else
+      gum style --foreground 6 "Branch already in use, creating detached worktree for PR review..."
+
+      if ! gum spin --spinner dot --title "Fetching PR..." -- git fetch origin "pull/${pr_num}/head" 2>/dev/null; then
+        gum style --foreground 1 "Failed to fetch PR"
+        return 1
+      fi
     fi
 
     if ! gum spin --spinner dot --title "Creating worktree..." -- git worktree add --detach "$worktree_path" FETCH_HEAD; then
@@ -1974,14 +2412,22 @@ _aw_pr() {
   # Set up the development environment (install dependencies)
   _aw_setup_environment "$worktree_path"
 
-  # Set terminal title for GitHub PR
-  printf '\033]0;GitHub PR #%s - %s\007' "$pr_num" "$title"
+  # Set terminal title
+  if [[ "$provider" == "gitlab" ]]; then
+    printf '\033]0;GitLab MR !%s - %s\007' "$pr_num" "$title"
+  else
+    printf '\033]0;GitHub PR #%s - %s\007' "$pr_num" "$title"
+  fi
 
   _resolve_ai_command || return 1
 
   echo ""
   if [[ "${AI_CMD[1]}" != "skip" ]]; then
-    gum style --foreground 2 "Starting $AI_CMD_NAME for PR review..."
+    if [[ "$provider" == "gitlab" ]]; then
+      gum style --foreground 2 "Starting $AI_CMD_NAME for MR review..."
+    else
+      gum style --foreground 2 "Starting $AI_CMD_NAME for PR review..."
+    fi
     "${AI_CMD[@]}"
   else
     gum style --foreground 3 "Skipping AI tool - worktree is ready for manual work"
