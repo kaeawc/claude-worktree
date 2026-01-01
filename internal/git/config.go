@@ -29,15 +29,15 @@ const (
 	ConfigLinearTeam = "auto-worktree.linear-team"
 
 	// Hook configuration
-	ConfigRunHooks         = "auto-worktree.run-hooks"
-	ConfigFailOnHookError  = "auto-worktree.fail-on-hook-error"
-	ConfigCustomHooks      = "auto-worktree.custom-hooks"
+	ConfigRunHooks        = "auto-worktree.run-hooks"
+	ConfigFailOnHookError = "auto-worktree.fail-on-hook-error"
+	ConfigCustomHooks     = "auto-worktree.custom-hooks"
 
 	// Issue template configuration
-	ConfigIssueTemplatesDir       = "auto-worktree.issue-templates-dir"
-	ConfigIssueTemplatesDisabled  = "auto-worktree.issue-templates-disabled"
-	ConfigIssueTemplatesNoPrompt  = "auto-worktree.issue-templates-no-prompt"
-	ConfigIssueTemplatesDetected  = "auto-worktree.issue-templates-detected"
+	ConfigIssueTemplatesDir      = "auto-worktree.issue-templates-dir"
+	ConfigIssueTemplatesDisabled = "auto-worktree.issue-templates-disabled"
+	ConfigIssueTemplatesNoPrompt = "auto-worktree.issue-templates-no-prompt"
+	ConfigIssueTemplatesDetected = "auto-worktree.issue-templates-detected"
 )
 
 // Valid values for specific configuration keys
