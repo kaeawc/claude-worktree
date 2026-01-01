@@ -56,6 +56,11 @@ disable=SC2004
 # Action: Fix in separate PR (low priority)
 disable=SC2001
 
+# SC2002: Useless cat. Consider 'cmd < file | ..' or 'cmd file | ..' instead
+# Status: 4 instances - Style issue (useless use of cat)
+# Action: Fix in separate PR (low priority)
+disable=SC2002
+
 # SC1087: Use braces when expanding arrays, e.g. ${array[idx]} (or ${var}[.. to quiet)
 # Status: 2 instances - Array expansion syntax
 # Action: Fix in separate PR
