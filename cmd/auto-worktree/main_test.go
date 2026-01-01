@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"strings"
@@ -9,11 +10,13 @@ import (
 
 func TestMain(t *testing.T) {
 	if os.Getenv("GO_TEST_PROCESS") == "1" {
+		// Run with help argument to avoid interactive menu in tests
+		os.Args = []string{"auto-worktree", "help"}
 		main()
 		return
 	}
 
-	cmd := exec.Command(os.Args[0], "-test.run=TestMain")
+	cmd := exec.CommandContext(context.Background(), os.Args[0], "-test.run=TestMain")
 	cmd.Env = append(os.Environ(), "GO_TEST_PROCESS=1")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -33,7 +36,7 @@ func TestVersionCommand(t *testing.T) {
 		return
 	}
 
-	cmd := exec.Command(os.Args[0], "-test.run=TestVersionCommand")
+	cmd := exec.CommandContext(context.Background(), os.Args[0], "-test.run=TestVersionCommand")
 	cmd.Env = append(os.Environ(), "GO_TEST_PROCESS=1")
 	output, err := cmd.CombinedOutput()
 	if err != nil {

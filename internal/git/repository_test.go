@@ -25,8 +25,19 @@ func setupTestRepo(t *testing.T) (string, func()) {
 	}
 
 	// Configure git user for commits
-	exec.Command("git", "config", "user.email", "test@example.com").Dir = tmpDir
-	exec.Command("git", "config", "user.name", "Test User").Run()
+	cmd = exec.Command("git", "config", "user.email", "test@example.com")
+	cmd.Dir = tmpDir
+	if err := cmd.Run(); err != nil {
+		os.RemoveAll(tmpDir)
+		t.Fatalf("failed to config git email: %v", err)
+	}
+
+	cmd = exec.Command("git", "config", "user.name", "Test User")
+	cmd.Dir = tmpDir
+	if err := cmd.Run(); err != nil {
+		os.RemoveAll(tmpDir)
+		t.Fatalf("failed to config git name: %v", err)
+	}
 
 	// Create an initial commit
 	readmePath := filepath.Join(tmpDir, "README.md")

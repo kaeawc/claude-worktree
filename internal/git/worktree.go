@@ -189,8 +189,9 @@ func getUnpushedCommitCount(path, branch string) (int, error) {
 	// First, try to get the upstream branch
 	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
 	cmd.Dir = path
-	output, err := cmd.Output()
+	_, err := cmd.Output()
 
+	var output []byte
 	if err != nil {
 		// No upstream branch configured, count all commits
 		cmd = exec.Command("git", "rev-list", "--count", "HEAD")

@@ -1,5 +1,7 @@
-# golangci-lint configuration for auto-worktree
+# golangci-lint v2 configuration for auto-worktree
 # https://golangci-lint.run/usage/configuration/
+
+version: "2"
 
 run:
   timeout: 5m
@@ -9,24 +11,20 @@ run:
 
 output:
   formats:
-    - format: colored-line-number
-  print-issued-lines: true
-  print-linter-name: true
-  sort-results: true
+    text:
+      path: stdout
 
 linters:
+  default: none
   enable:
     # Enabled by default
     - errcheck      # Check for unchecked errors
-    - gosimple      # Simplify code
     - govet         # Vet examines Go source code
     - ineffassign   # Detect ineffectual assignments
-    - staticcheck   # Go static analysis tool
+    - staticcheck   # Go static analysis tool (includes gosimple in v2)
     - unused        # Check for unused constants, variables, functions and types
 
     # Additional recommended linters
-    - gofmt         # Check whether code was gofmt-ed
-    - goimports     # Check import statements are formatted according to the 'goimport' command
     - misspell      # Finds commonly misspelled English words
     - revive        # Fast, configurable, extensible, flexible, and beautiful linter for Go
     - unconvert     # Remove unnecessary type conversions
@@ -35,19 +33,17 @@ linters:
     - goconst       # Find repeated strings that could be replaced by a constant
     - dupl          # Tool for code clone detection
     - gosec         # Inspect source code for security problems
-    - stylecheck    # Stylecheck is a replacement for golint
     - gocritic      # Provides diagnostics that check for bugs, performance and style issues
     - gocognit      # Compute and check the cognitive complexity of functions
     - bodyclose     # Check whether HTTP response body is closed successfully
     - noctx         # Find sending http request without context.Context
-    - copyloopvar   # Check for pointers to enclosing loop variables (replaces exportloopref)
+    - copyloopvar   # Check for pointers to enclosing loop variables
     - prealloc      # Find slice declarations that could potentially be pre-allocated
     - predeclared   # Find code that shadows one of Go's predeclared identifiers
     - whitespace    # Detection of leading and trailing whitespace
     - wsl           # Whitespace Linter - Forces you to use empty lines!
 
   disable:
-    # Disabled linters (can be enabled incrementally)
     - godox         # Detect FIXME, TODO and other comment tags
     - testpackage   # Makes you use a separate _test package
     - nlreturn      # Checks for a new line before return and branch statements
@@ -63,124 +59,162 @@ linters:
     - gochecknoinits   # Check that no init functions exist
     - nestif        # Reports deeply nested if statements
     - maintidx      # Measures the maintainability index of each function
-    - mnd           # Detects magic numbers (replaces gomnd)
+    - mnd           # Detects magic numbers
 
-linters-settings:
-  errcheck:
-    check-type-assertions: true
-    check-blank: true
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
 
-  govet:
-    enable-all: true
-    disable:
-      - shadow  # Can be noisy, enable later if needed
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment  # Minor optimization, not critical
+      settings:
+        shadow:
+          strict: false
 
-  gofmt:
-    simplify: true
+    misspell:
+      locale: US
 
-  goimports:
-    local-prefixes: github.com/kaeawc/auto-worktree
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+        - name: if-return
+        - name: increment-decrement
+        - name: var-naming
+        - name: var-declaration
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: errorf
+        - name: empty-block
+        - name: superfluous-else
+        - name: unused-parameter
+        - name: unreachable-code
+        - name: redefines-builtin-id
 
-  misspell:
-    locale: US
+    gocyclo:
+      min-complexity: 15
 
-  revive:
-    confidence: 0.8
+    gocognit:
+      min-complexity: 20
+
+    dupl:
+      threshold: 100
+
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+
+    gosec:
+      excludes:
+        - G204  # Audit use of command execution - we need this for git commands
+
+    gocritic:
+      enabled-checks:
+        - appendAssign
+        - assignOp
+        - boolExprSimplify
+        - captLocal
+        - caseOrder
+        - commentedOutCode
+        - defaultCaseOrder
+        - dupArg
+        - dupBranchBody
+        - dupCase
+        - dupSubExpr
+        - elseif
+        - emptyFallthrough
+        - exitAfterDefer
+        - flagDeref
+        - flagName
+        - hexLiteral
+        - ifElseChain
+        - indexAlloc
+        - methodExprCall
+        - nilValReturn
+        - offBy1
+        - rangeExprCopy
+        - rangeValCopy
+        - regexpMust
+        - singleCaseSwitch
+        - sloppyLen
+        - switchTrue
+        - typeSwitchVar
+        - underef
+        - unlabelStmt
+        - unlambda
+        - unslice
+        - valSwap
+        - wrapperFunc
+
+    whitespace:
+      multi-if: false
+      multi-func: false
+
+    wsl:
+      allow-assign-and-call: true
+      allow-cuddle-declarations: true
+      allow-multiline-assign: true
+      allow-separated-leading-comment: false
+      allow-trailing-comment: true
+      force-case-trailing-whitespace: 0
+      force-err-cuddling: false
+      force-short-decl-cuddling: false
+
+  exclusions:
+    paths:
+      - vendor
+      - .git
     rules:
-      - name: blank-imports
-      - name: context-as-argument
-      - name: context-keys-type
-      - name: dot-imports
-      - name: error-return
-      - name: error-strings
-      - name: error-naming
-      - name: exported
-      - name: if-return
-      - name: increment-decrement
-      - name: var-naming
-      - name: var-declaration
-      - name: package-comments
-      - name: range
-      - name: receiver-naming
-      - name: time-naming
-      - name: unexported-return
-      - name: indent-error-flow
-      - name: errorf
-      - name: empty-block
-      - name: superfluous-else
-      - name: unused-parameter
-      - name: unreachable-code
-      - name: redefines-builtin-id
+      # Exclude some linters from running on tests files
+      - path: _test\.go
+        linters:
+          - gocyclo
+          - errcheck
+          - dupl
+          - gosec
+          - goconst
+          - wsl
 
-  gocyclo:
-    min-complexity: 15
+      # Exclude known linters from partially hard-vendored code
+      - path: internal/hmac/
+        text: "weak cryptographic primitive"
+        linters:
+          - gosec
 
-  gocognit:
-    min-complexity: 20
+formatters:
+  enable:
+    - gofmt
+    - goimports
 
-  dupl:
-    threshold: 100
+  settings:
+    gofmt:
+      simplify: true
 
-  goconst:
-    min-len: 3
-    min-occurrences: 3
+    goimports:
+      local-prefixes:
+        - github.com/kaeawc/auto-worktree
 
-  gosec:
-    excludes:
-      - G204  # Audit use of command execution - we need this for git commands
-
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - style
-      - performance
-    disabled-checks:
-      - hugeParam  # Can be noisy
-      - rangeValCopy  # Can be noisy
-
-  whitespace:
-    multi-if: false
-    multi-func: false
-
-  wsl:
-    allow-assign-and-anything: true
-    allow-multiline-assign: true
-    allow-cuddle-declarations: true
-    allow-trailing-comment: true
-    force-case-trailing-whitespace: 0
+  exclusions:
+    paths:
+      - vendor
+      - .git
 
 issues:
-  exclude-dirs:
-    - vendor
-    - .git
-
-  uniq-by-line: true
-
-  exclude-rules:
-    # Exclude some linters from running on tests files
-    - path: _test\.go
-      linters:
-        - gocyclo
-        - errcheck
-        - dupl
-        - gosec
-        - goconst
-        - wsl
-
-    # Exclude known linters from partially hard-vendored code
-    - path: internal/hmac/
-      text: "weak cryptographic primitive"
-      linters:
-        - gosec
-
-  # Maximum issues count per one linter
   max-issues-per-linter: 0
-
-  # Maximum count of issues with the same text
   max-same-issues: 0
-
-  # Show only new issues
+  uniq-by-line: true
   new: false
-
-  # Fix found issues (if it's supported by the linter)
   fix: false
