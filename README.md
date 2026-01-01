@@ -69,58 +69,67 @@ Add to your `~/.zshrc`:
 source /path/to/auto-worktree/aw.sh
 ```
 
+This provides both the full `auto-worktree` command and a convenient `aw` shorthand alias that is **worktree-aware**:
+- When developing auto-worktree itself, `aw` automatically uses your local changes
+- In other repositories, `aw` uses the globally-installed version
+- Both commands work identically - `aw` is just shorter to type
+
 ## Usage
 
+Use either the full `auto-worktree` command or the shorter `aw` alias:
+
 ```bash
-auto-worktree                  # Interactive menu
-auto-worktree new              # Create new worktree
-auto-worktree issue [id]       # Work on an issue (GitHub #123, GitLab #456, JIRA PROJ-123, or Linear TEAM-123)
-auto-worktree pr [num]         # Review a GitHub PR or GitLab MR
-auto-worktree list             # List existing worktrees
-auto-worktree settings         # Configure per-repo settings
-auto-worktree help             # Show help
+aw                             # Interactive menu
+aw new                         # Create new worktree
+aw issue [id]                  # Work on an issue (GitHub #123, GitLab #456, JIRA PROJ-123, or Linear TEAM-123)
+aw pr [num]                    # Review a GitHub PR or GitLab MR
+aw list                        # List existing worktrees
+aw settings                    # Configure per-repo settings
+aw help                        # Show help
 ```
+
+**Note:** `aw` and `auto-worktree` work identically. All examples below use `aw` for brevity.
 
 ### Create a New Worktree
 
 ```bash
-auto-worktree new
+aw new
 ```
 
 Enter a branch name or leave blank for a random name like `work/mint-code-flux`.
 
 ### Work on Issues
 
-The first time you run `auto-worktree issue`, you'll be prompted to choose between GitHub, GitLab, JIRA, or Linear for this repository. This preference is stored in git config.
+The first time you run `aw issue`, you'll be prompted to choose between GitHub, GitLab, JIRA, or Linear for this repository. This preference is stored in git config.
 
 **GitHub Issues:**
 ```bash
-auto-worktree issue        # Select from open issues
-auto-worktree issue 42     # Work on issue #42 directly
+aw issue                   # Select from open issues
+aw issue 42                # Work on issue #42 directly
 ```
 
 Creates a branch like `work/42-fix-login-bug` and launches your AI agent.
 
 **GitLab Issues:**
 ```bash
-auto-worktree issue        # Select from open GitLab issues
-auto-worktree issue 42     # Work on issue #42 directly
+aw issue                   # Select from open GitLab issues
+aw issue 42                # Work on issue #42 directly
 ```
 
 Creates a branch like `work/42-fix-login-bug` and launches your AI agent.
 
 **JIRA Issues:**
 ```bash
-auto-worktree issue             # Select from open JIRA issues
-auto-worktree issue PROJ-123    # Work on JIRA-123 directly
+aw issue                   # Select from open JIRA issues
+aw issue PROJ-123          # Work on JIRA-123 directly
 ```
 
 Creates a branch like `work/PROJ-123-implement-feature` and launches your AI agent.
 
 **Linear Issues:**
 ```bash
-auto-worktree issue             # Select from open Linear issues
-auto-worktree issue TEAM-123    # Work on Linear issue TEAM-123 directly
+aw issue                   # Select from open Linear issues
+aw issue TEAM-123          # Work on Linear issue TEAM-123 directly
 ```
 
 Creates a branch like `work/TEAM-123-implement-feature` and launches your AI agent.
@@ -128,8 +137,8 @@ Creates a branch like `work/TEAM-123-implement-feature` and launches your AI age
 ### Review a Pull Request
 
 ```bash
-auto-worktree pr           # Select from open PRs
-auto-worktree pr 123       # Review PR #123 directly
+aw pr                      # Select from open PRs
+aw pr 123                  # Review PR #123 directly
 ```
 
 Checks out the PR in a new worktree and shows the diff stats.
@@ -137,7 +146,7 @@ Checks out the PR in a new worktree and shows the diff stats.
 ### List Worktrees
 
 ```bash
-auto-worktree list
+aw list
 ```
 
 Shows all worktrees with:
@@ -148,8 +157,8 @@ Shows all worktrees with:
 ## Configuration
 
 Issue provider settings are stored per-repository using git config. Use the
-interactive Settings menu (or `auto-worktree settings`) to view and update
-project-specific preferences.
+interactive Settings menu (or `aw settings`) to view and update project-specific
+preferences.
 
 ```bash
 # View current configuration
@@ -191,13 +200,13 @@ Different repositories can use different issue providers.
 ```bash
 # Start work on a GitHub issue
 cd my-project
-auto-worktree issue 42
+aw issue 42
 
 # AI agent opens in ~/worktrees/my-project/work-42-add-feature/
 # Make changes, commit, push, create PR
 
 # Later, check for cleanup
-auto-worktree list
+aw list
 # Shows "[merged #42]" indicator, prompts to clean up
 ```
 
@@ -206,18 +215,18 @@ auto-worktree list
 ```bash
 # First time setup
 cd my-work-project
-auto-worktree issue
+aw issue
 # Choose "JIRA" from the menu
 # Enter JIRA server URL and project key
 
 # Start work on a JIRA ticket
-auto-worktree issue PROJ-456
+aw issue PROJ-456
 
 # AI agent opens in ~/worktrees/my-work-project/work-PROJ-456-add-auth/
 # Make changes, commit, push
 
 # Later, when JIRA ticket is marked as Done
-auto-worktree list
+aw list
 # Shows "[resolved PROJ-456]" indicator, prompts to clean up
 ```
 
@@ -226,29 +235,29 @@ auto-worktree list
 ```bash
 # First time setup
 cd my-product-project
-auto-worktree issue
+aw issue
 # Choose "Linear Issues" from the menu
 # Optionally enter default team key
 
 # Start work on a Linear issue
-auto-worktree issue TEAM-789
+aw issue TEAM-789
 
 # AI agent opens in ~/worktrees/my-product-project/work-TEAM-789-add-feature/
 # Make changes, commit, push
 
 # Later, when Linear issue is marked as Done
-auto-worktree list
+aw list
 # Shows "[completed TEAM-789]" indicator, prompts to clean up
 ```
 
 ## Tab Completion
 
-The tool includes full zsh completion:
+The tool includes full zsh completion for both `aw` and `auto-worktree`:
 
 ```bash
-auto-worktree <TAB>        # Shows: new, issue, pr, list, settings, help
-auto-worktree issue <TAB>  # Shows open issues from GitHub
-auto-worktree pr <TAB>     # Shows open PRs from GitHub
+aw <TAB>                   # Shows: new, issue, pr, list, settings, help
+aw issue <TAB>             # Shows open issues from GitHub
+aw pr <TAB>                # Shows open PRs from GitHub
 ```
 
 ## Development
