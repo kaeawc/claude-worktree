@@ -1,0 +1,185 @@
+# golangci-lint configuration for auto-worktree
+# https://golangci-lint.run/usage/configuration/
+
+run:
+  timeout: 5m
+  tests: true
+  build-tags: []
+  skip-dirs:
+    - vendor
+    - .git
+  skip-files: []
+  modules-download-mode: readonly
+
+output:
+  formats:
+    - format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+  uniq-by-line: true
+  sort-results: true
+
+linters:
+  enable:
+    # Enabled by default
+    - errcheck      # Check for unchecked errors
+    - gosimple      # Simplify code
+    - govet         # Vet examines Go source code
+    - ineffassign   # Detect ineffectual assignments
+    - staticcheck   # Go static analysis tool
+    - unused        # Check for unused constants, variables, functions and types
+
+    # Additional recommended linters
+    - gofmt         # Check whether code was gofmt-ed
+    - goimports     # Check import statements are formatted according to the 'goimport' command
+    - misspell      # Finds commonly misspelled English words
+    - revive        # Fast, configurable, extensible, flexible, and beautiful linter for Go
+    - unconvert     # Remove unnecessary type conversions
+    - unparam       # Report unused function parameters
+    - gocyclo       # Compute and check the cyclomatic complexity of functions
+    - goconst       # Find repeated strings that could be replaced by a constant
+    - dupl          # Tool for code clone detection
+    - gosec         # Inspect source code for security problems
+    - stylecheck    # Stylecheck is a replacement for golint
+    - gocritic      # Provides diagnostics that check for bugs, performance and style issues
+    - gocognit      # Compute and check the cognitive complexity of functions
+    - bodyclose     # Check whether HTTP response body is closed successfully
+    - noctx         # Find sending http request without context.Context
+    - exportloopref # Check for pointers to enclosing loop variables
+    - prealloc      # Find slice declarations that could potentially be pre-allocated
+    - predeclared   # Find code that shadows one of Go's predeclared identifiers
+    - whitespace    # Detection of leading and trailing whitespace
+    - wsl           # Whitespace Linter - Forces you to use empty lines!
+
+  disable:
+    # Disabled linters (can be enabled incrementally)
+    - godox         # Detect FIXME, TODO and other comment tags
+    - testpackage   # Makes you use a separate _test package
+    - nlreturn      # Checks for a new line before return and branch statements
+    - exhaustive    # Check exhaustiveness of enum switch statements
+    - exhaustruct   # Checks if all structure fields are initialized
+    - tagliatelle   # Check struct tags
+    - varnamelen    # Checks that the length of a variable's name matches its scope
+    - ireturn       # Accept Interfaces, Return Concrete Types
+    - cyclop        # Checks function and package cyclomatic complexity
+    - funlen        # Tool for detection of long functions
+    - lll           # Reports long lines
+    - gochecknoglobals # Check that no global variables exist
+    - gochecknoinits   # Check that no init functions exist
+    - nestif        # Reports deeply nested if statements
+    - maintidx      # Measures the maintainability index of each function
+    - gomnd         # Detects magic numbers
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+
+  govet:
+    enable-all: true
+    disable:
+      - shadow  # Can be noisy, enable later if needed
+
+  gofmt:
+    simplify: true
+
+  goimports:
+    local-prefixes: github.com/kaeawc/auto-worktree
+
+  misspell:
+    locale: US
+
+  revive:
+    confidence: 0.8
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+      - name: if-return
+      - name: increment-decrement
+      - name: var-naming
+      - name: var-declaration
+      - name: package-comments
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: indent-error-flow
+      - name: errorf
+      - name: empty-block
+      - name: superfluous-else
+      - name: unused-parameter
+      - name: unreachable-code
+      - name: redefines-builtin-id
+
+  gocyclo:
+    min-complexity: 15
+
+  gocognit:
+    min-complexity: 20
+
+  dupl:
+    threshold: 100
+
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+
+  gosec:
+    excludes:
+      - G204  # Audit use of command execution - we need this for git commands
+
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+      - performance
+    disabled-checks:
+      - hugeParam  # Can be noisy
+      - rangeValCopy  # Can be noisy
+
+  whitespace:
+    multi-if: false
+    multi-func: false
+
+  wsl:
+    allow-assign-and-anything: true
+    allow-multiline-assign: true
+    allow-cuddle-declarations: true
+    allow-trailing-comment: true
+    force-case-trailing-whitespace: 0
+
+issues:
+  exclude-rules:
+    # Exclude some linters from running on tests files
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - errcheck
+        - dupl
+        - gosec
+        - goconst
+        - wsl
+
+    # Exclude known linters from partially hard-vendored code
+    - path: internal/hmac/
+      text: "weak cryptographic primitive"
+      linters:
+        - gosec
+
+  # Maximum issues count per one linter
+  max-issues-per-linter: 0
+
+  # Maximum count of issues with the same text
+  max-same-issues: 0
+
+  # Show only new issues
+  new: false
+
+  # Fix found issues (if it's supported by the linter)
+  fix: false
