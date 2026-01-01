@@ -901,7 +901,7 @@ _aw_set_issue_templates_detected_flag() {
 
 _aw_detect_issue_templates() {
   # Auto-detect issue templates for the current provider
-  # Args: $1 = provider (github, gitlab, jira)
+  # Args: $1 = provider (github, gitlab, jira, linear)
   # Returns: List of template files (one per line), or empty if none found
   local provider="$1"
   local templates_dir=""
@@ -928,6 +928,11 @@ _aw_detect_issue_templates() {
           templates_dir=".jira/issue_templates"
         fi
         ;;
+      linear)
+        if [[ -d ".linear/issue_templates" ]]; then
+          templates_dir=".linear/issue_templates"
+        fi
+        ;;
     esac
   fi
 
@@ -939,7 +944,7 @@ _aw_detect_issue_templates() {
 
 _aw_get_template_default_dir() {
   # Get the default template directory for a provider
-  # Args: $1 = provider (github, gitlab, jira)
+  # Args: $1 = provider (github, gitlab, jira, linear)
   # Returns: Default directory path
   local provider="$1"
 
@@ -953,12 +958,15 @@ _aw_get_template_default_dir() {
     jira)
       echo ".jira/issue_templates"
       ;;
+    linear)
+      echo ".linear/issue_templates"
+      ;;
   esac
 }
 
 _aw_configure_issue_templates() {
   # Interactive configuration for issue templates
-  # Args: $1 = provider (github, gitlab, jira)
+  # Args: $1 = provider (github, gitlab, jira, linear)
   # Returns: 0 if templates configured/enabled, 1 if user opts out
   local provider="$1"
 
@@ -2737,7 +2745,41 @@ _aw_extract_template_sections() {
     return 1
   fi
 
-  grep -E '^#{1,2} ' "$template_file" | sed 's/^#* //'
+  # Strip YAML frontmatter first, then extract sections
+  sed '/^---$/,/^---$/d' "$template_file" | grep -E '^#{1,2} ' | sed 's/^#* //'
+}
+
+_aw_extract_section_content() {
+  # Extract content for a specific section from template
+  # Args: $1 = template file path, $2 = section name
+  # Returns: Content between this section header and the next section header
+  local template_file="$1"
+  local section_name="$2"
+
+  if [[ ! -f "$template_file" ]]; then
+    return 1
+  fi
+
+  # Strip YAML frontmatter and extract content for this section
+  local content=$(sed '/^---$/,/^---$/d' "$template_file" | \
+    awk -v section="$section_name" '
+      BEGIN { in_section=0; found=0 }
+      /^#{1,2} / {
+        if (in_section) {
+          exit
+        }
+        section_header = $0
+        gsub(/^#* /, "", section_header)
+        if (section_header == section) {
+          in_section=1
+          found=1
+          next
+        }
+      }
+      in_section { print }
+    ')
+
+  echo "$content"
 }
 
 # ============================================================================
@@ -2825,6 +2867,42 @@ _aw_create_issue_jira() {
   fi
 }
 
+_aw_create_issue_linear() {
+  # Create a Linear issue
+  # Args: $1 = title, $2 = body
+  local title="$1"
+  local body="$2"
+
+  if [[ -z "$title" ]]; then
+    gum style --foreground 1 "Error: Title is required"
+    return 1
+  fi
+
+  # Get default team
+  local team=$(_aw_get_linear_team)
+
+  if [[ -z "$team" ]]; then
+    team=$(gum input --placeholder "TEAM" --header "Linear Team Key:")
+    if [[ -z "$team" ]]; then
+      gum style --foreground 1 "Error: Team key is required"
+      return 1
+    fi
+  fi
+
+  # Create issue using Linear CLI
+  # Format: linear issue create -t "title" -d "description" --team TEAM
+  local issue_id=$(linear issue create -t "$title" -d "$body" --team "$team" 2>&1 | grep -oE '[A-Z]+-[0-9]+' | head -1)
+
+  if [[ -n "$issue_id" ]]; then
+    gum style --foreground 2 "✓ Issue created: $issue_id"
+    echo "$issue_id"
+    return 0
+  else
+    gum style --foreground 1 "Error creating Linear issue"
+    return 1
+  fi
+}
+
 _aw_manual_template_walkthrough() {
   # Walk user through template sections manually
   # Args: $1 = template file path
@@ -2842,6 +2920,11 @@ _aw_manual_template_walkthrough() {
 
   body=$(echo "$template_content" | gum write --width 80 --height 20 \
     --placeholder "Fill in the template sections...")
+
+  # Check if user cancelled
+  if [[ $? -ne 0 ]]; then
+    return 1
+  fi
 
   echo "$body"
 }
@@ -2900,7 +2983,7 @@ Output the issue body in markdown format."
   echo ""
 
   # Create output file
-  local output_file=$(mktemp /tmp/aw-issue-output-XXXXXX.md)
+  local output_file=$(mktemp --suffix=.md)
 
   # Execute AI in headless mode with -p flag
   if "${AI_CMD[@]}" -p "$ai_prompt" > "$output_file" 2>&1; then
@@ -2914,8 +2997,10 @@ Output the issue body in markdown format."
       return 1
     fi
   else
-    # AI failed
+    # AI failed - unset default AI tool
     gum style --foreground 3 "AI generation failed"
+    gum style --foreground 3 "Removing ${AI_CMD_NAME} as default AI tool"
+    git config --unset auto-worktree.ai-tool 2>/dev/null || true
     rm "$output_file"
     return 1
   fi
@@ -2962,10 +3047,31 @@ _aw_fill_template_section_by_section() {
     gum style --foreground 4 --bold "## $section_name"
     echo ""
 
-    # Ask user to provide content for this section
-    local section_content=$(gum write --width 80 --height 10 \
-      --placeholder "Enter content for: $section_name (Ctrl+D when done)" \
+    # Extract the existing content for this section from the template
+    local section_template_content=$(_aw_extract_section_content "$template_file" "$section_name")
+
+    # Show template content as context (if it exists)
+    if [[ -n "$section_template_content" ]]; then
+      # Trim leading/trailing blank lines for display
+      local trimmed_content=$(echo "$section_template_content" | sed '/./,$!d' | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')
+
+      if [[ -n "$trimmed_content" ]]; then
+        echo ""
+        gum style --foreground 8 "Template guidance:"
+        echo "$trimmed_content" | head -20
+        echo ""
+      fi
+    fi
+
+    # Ask user to provide content for this section, pre-populated with template content
+    local section_content=$(echo "$section_template_content" | gum write --width 80 --height 15 \
+      --placeholder "Fill in or edit this section (Ctrl+D when done)" \
       --char-limit 0)
+
+    # Check if user cancelled
+    if [[ $? -ne 0 ]]; then
+      return 1
+    fi
 
     # Add section to filled content
     filled_content+="## ${section_name}
@@ -3106,7 +3212,7 @@ _aw_create_issue() {
     echo ""
     title=$(gum input --placeholder "Issue title or brief description" --header "Enter issue title/prompt:" --width 80)
 
-    if [[ -z "$title" ]]; then
+    if [[ $? -ne 0 ]] || [[ -z "$title" ]]; then
       gum style --foreground 3 "Cancelled"
       return 0
     fi
@@ -3149,7 +3255,7 @@ _aw_create_issue() {
 
         local choice=$(printf '%s\n' "${template_choices[@]}" | gum choose --height 10)
 
-        if [[ -z "$choice" ]]; then
+        if [[ $? -ne 0 ]] || [[ -z "$choice" ]]; then
           gum style --foreground 3 "Cancelled"
           return 0
         fi
@@ -3164,17 +3270,30 @@ _aw_create_issue() {
               echo ""
               gum style --foreground 6 "AI-generated content (review and edit if needed):"
               body=$(cat "$ai_output_file" | gum write --width 80 --height 20)
+              if [[ $? -ne 0 ]]; then
+                rm "$ai_output_file"
+                gum style --foreground 3 "Issue creation cancelled"
+                return 0
+              fi
               rm "$ai_output_file"
             else
               # Fall back to manual input
               echo ""
               body=$(gum write --width 80 --height 15 \
                 --placeholder "Enter issue description (Ctrl+D to finish)...")
+              if [[ $? -ne 0 ]]; then
+                gum style --foreground 3 "Issue creation cancelled"
+                return 0
+              fi
             fi
           else
             echo ""
             body=$(gum write --width 80 --height 15 \
               --placeholder "Enter issue description (Ctrl+D to finish)...")
+            if [[ $? -ne 0 ]]; then
+              gum style --foreground 3 "Issue creation cancelled"
+              return 0
+            fi
           fi
         else
           # Find the selected template file
@@ -3190,21 +3309,38 @@ _aw_create_issue() {
                 echo ""
                 gum style --foreground 6 "AI-generated content (review and edit if needed):"
                 body=$(cat "$ai_output_file" | gum write --width 80 --height 20 --char-limit 0)
+                if [[ $? -ne 0 ]]; then
+                  rm "$ai_output_file"
+                  gum style --foreground 3 "Issue creation cancelled"
+                  return 0
+                fi
                 rm "$ai_output_file"
               else
                 # AI failed, fall back to section-by-section
                 echo ""
                 gum style --foreground 3 "AI generation failed, using section-by-section"
                 body=$(_aw_fill_template_section_by_section "$template_file" "$title")
+                if [[ $? -ne 0 ]]; then
+                  gum style --foreground 3 "Issue creation cancelled"
+                  return 0
+                fi
               fi
             else
               # No AI - offer section-by-section or full edit
               echo ""
               if gum confirm "Fill out template section-by-section? (Recommended)"; then
                 body=$(_aw_fill_template_section_by_section "$template_file" "$title")
+                if [[ $? -ne 0 ]]; then
+                  gum style --foreground 3 "Issue creation cancelled"
+                  return 0
+                fi
               else
                 # Let user edit the whole template at once
                 body=$(_aw_manual_template_walkthrough "$template_file")
+                if [[ $? -ne 0 ]]; then
+                  gum style --foreground 3 "Issue creation cancelled"
+                  return 0
+                fi
               fi
             fi
           else
@@ -3221,16 +3357,29 @@ _aw_create_issue() {
             echo ""
             gum style --foreground 6 "AI-generated content (review and edit if needed):"
             body=$(cat "$ai_output_file" | gum write --width 80 --height 20)
+            if [[ $? -ne 0 ]]; then
+              rm "$ai_output_file"
+              gum style --foreground 3 "Issue creation cancelled"
+              return 0
+            fi
             rm "$ai_output_file"
           else
             echo ""
             body=$(gum write --width 80 --height 15 \
               --placeholder "Enter issue description (Ctrl+D to finish)...")
+            if [[ $? -ne 0 ]]; then
+              gum style --foreground 3 "Issue creation cancelled"
+              return 0
+            fi
           fi
         else
           echo ""
           body=$(gum write --width 80 --height 15 \
             --placeholder "Enter issue description (Ctrl+D to finish)...")
+          if [[ $? -ne 0 ]]; then
+            gum style --foreground 3 "Issue creation cancelled"
+            return 0
+          fi
         fi
       fi
     else
@@ -3242,16 +3391,29 @@ _aw_create_issue() {
           echo ""
           gum style --foreground 6 "AI-generated content (review and edit if needed):"
           body=$(cat "$ai_output_file" | gum write --width 80 --height 20)
+          if [[ $? -ne 0 ]]; then
+            rm "$ai_output_file"
+            gum style --foreground 3 "Issue creation cancelled"
+            return 0
+          fi
           rm "$ai_output_file"
         else
           echo ""
           body=$(gum write --width 80 --height 15 \
             --placeholder "Enter issue description (Ctrl+D to finish)...")
+          if [[ $? -ne 0 ]]; then
+            gum style --foreground 3 "Issue creation cancelled"
+            return 0
+          fi
         fi
       else
         echo ""
         body=$(gum write --width 80 --height 15 \
           --placeholder "Enter issue description (Ctrl+D to finish)...")
+        if [[ $? -ne 0 ]]; then
+          gum style --foreground 3 "Issue creation cancelled"
+          return 0
+        fi
       fi
     fi
   fi
@@ -3271,6 +3433,9 @@ _aw_create_issue() {
       ;;
     jira)
       result=$(_aw_create_issue_jira "$title" "$body")
+      ;;
+    linear)
+      result=$(_aw_create_issue_linear "$title" "$body")
       ;;
     *)
       gum style --foreground 1 "Error: Unknown provider: $provider"
@@ -3293,7 +3458,7 @@ _aw_create_issue() {
         if [[ -z "$issue_id" ]]; then
           issue_id=$(echo "$result" | grep -oE '/[0-9]+$' | tr -d '/' | head -1)
         fi
-      elif [[ "$provider" == "jira" ]]; then
+      elif [[ "$provider" == "jira" ]] || [[ "$provider" == "linear" ]]; then
         issue_id=$(echo "$result" | grep -oE '[A-Z]+-[0-9]+' | head -1)
       fi
 
