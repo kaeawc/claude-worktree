@@ -16,6 +16,8 @@ type Repository struct {
 	WorktreeBase string
 	// SourceFolder is the name of the repository directory
 	SourceFolder string
+	// Config provides access to git configuration for this repository
+	Config *Config
 }
 
 // NewRepository creates a Repository instance from the current working directory
@@ -50,6 +52,7 @@ func NewRepositoryFromPath(path string) (*Repository, error) {
 		RootPath:     rootPath,
 		WorktreeBase: worktreeBase,
 		SourceFolder: sourceFolder,
+		Config:       NewConfig(rootPath),
 	}, nil
 }
 
