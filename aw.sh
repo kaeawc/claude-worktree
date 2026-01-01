@@ -68,6 +68,83 @@ _save_ai_preference() {
   echo "$tool" > "$_AW_PREF_FILE"
 }
 
+# Auto-select preference file
+_AW_AUTOSELECT_PREF="$_AW_CONFIG_DIR/issue_autoselect_disabled"
+
+# Check if auto-select is disabled
+_is_autoselect_disabled() {
+  [[ -f "$_AW_AUTOSELECT_PREF" ]]
+}
+
+# Disable auto-select
+_disable_autoselect() {
+  mkdir -p "$_AW_CONFIG_DIR"
+  touch "$_AW_AUTOSELECT_PREF"
+}
+
+# Enable auto-select
+_enable_autoselect() {
+  rm -f "$_AW_AUTOSELECT_PREF"
+}
+
+# AI-powered issue selection - filters to top 5 issues in priority order
+_ai_select_issues() {
+  local issues="$1"
+  local highlighted_issues="$2"
+  local repo_info="$3"
+
+  # Create a temporary file with the issue list
+  local temp_issues=$(mktemp)
+  echo "$issues" > "$temp_issues"
+
+  # Prepare the prompt for AI
+  local prompt="Analyze the following GitHub issues and select the top 5 issues that would be best to work on next. Consider:
+- Priority labels (high priority, urgent, etc.)
+- Issue type (bug fixes are often higher priority than features)
+- Labels like 'good first issue' or 'help wanted'
+- Issue complexity and impact
+- Any context from the repository: $repo_info
+
+Return ONLY the top 5 issue numbers in priority order (one per line), formatted as just the numbers (e.g., '42').
+
+Issues:
+$(cat "$temp_issues")
+
+Return only the 5 issue numbers, one per line, nothing else."
+
+  # Use the configured AI tool to select issues
+  _resolve_ai_command || {
+    rm -f "$temp_issues"
+    return 1
+  }
+
+  if [[ "${AI_CMD[1]}" == "skip" ]]; then
+    rm -f "$temp_issues"
+    return 1
+  fi
+
+  # Run AI command with the prompt
+  local selected_numbers
+  selected_numbers=$(echo "$prompt" | "${AI_CMD[@]}" --no-tty 2>/dev/null | grep -E '^[0-9]+$' | head -5)
+
+  rm -f "$temp_issues"
+
+  if [[ -z "$selected_numbers" ]]; then
+    return 1
+  fi
+
+  # Filter highlighted issues to only include selected ones, in priority order
+  local filtered=""
+  while IFS= read -r num; do
+    local matching_issue=$(echo "$highlighted_issues" | grep -E "^(● )?#${num} \|" | head -1)
+    if [[ -n "$matching_issue" ]]; then
+      filtered+="${matching_issue}"$'\n'
+    fi
+  done <<< "$selected_numbers"
+
+  echo "$filtered"
+}
+
 # Install AI tool via interactive menu
 _install_ai_tool() {
   echo ""
@@ -1168,14 +1245,69 @@ _aw_issue() {
       fi
     done <<< "$issues"
 
-    local selection=$(echo "$highlighted_issues" | gum filter --placeholder "Type to filter issues... (● = active worktree)")
+    # Build the selection list with auto-select options
+    local selection_list=""
+    if ! _is_autoselect_disabled; then
+      # Auto-select is enabled - show auto-select options at the top
+      selection_list="⚡ Auto select"$'\n'
+      selection_list+="🚫 Do not show me auto select again"$'\n'
+      selection_list+="$highlighted_issues"
+    else
+      # Auto-select is disabled - add re-enable option at the end
+      selection_list="$highlighted_issues"
+      selection_list+="⚡ Auto select next issue"$'\n'
+    fi
+
+    local selection=$(echo "$selection_list" | gum filter --placeholder "Type to filter issues... (● = active worktree)")
 
     if [[ -z "$selection" ]]; then
       gum style --foreground 3 "Cancelled"
       return 0
     fi
 
-    issue_num=$(echo "$selection" | sed 's/^● *//' | sed 's/^#//' | cut -d'|' -f1 | tr -d ' ')
+    # Handle special auto-select options
+    if [[ "$selection" == "⚡ Auto select" ]]; then
+      gum spin --spinner dot --title "AI is selecting best issues..." -- sleep 0.5
+
+      local filtered_issues=$(_ai_select_issues "$issues" "$highlighted_issues" "${REPO_OWNER}/${REPO_NAME}")
+
+      if [[ -z "$filtered_issues" ]]; then
+        gum style --foreground 1 "AI selection failed, showing all issues"
+        filtered_issues="$highlighted_issues"
+      else
+        echo ""
+        gum style --foreground 2 "✓ AI selected top 5 issues in priority order"
+        echo ""
+      fi
+
+      # Show the filtered list
+      selection=$(echo "$filtered_issues" | gum filter --placeholder "Select an issue from AI recommendations")
+
+      if [[ -z "$selection" ]]; then
+        gum style --foreground 3 "Cancelled"
+        return 0
+      fi
+
+      issue_num=$(echo "$selection" | sed 's/^● *//' | sed 's/^#//' | cut -d'|' -f1 | tr -d ' ')
+
+    elif [[ "$selection" == "🚫 Do not show me auto select again" ]]; then
+      _disable_autoselect
+      gum style --foreground 3 "Auto-select disabled. You can re-enable it from the bottom of the issue list."
+      # Recursively call to show the updated list
+      _aw_issue
+      return $?
+
+    elif [[ "$selection" == "⚡ Auto select next issue" ]]; then
+      _enable_autoselect
+      gum style --foreground 2 "Auto-select re-enabled!"
+      # Recursively call to show the updated list
+      _aw_issue
+      return $?
+
+    else
+      # Normal issue selection
+      issue_num=$(echo "$selection" | sed 's/^● *//' | sed 's/^#//' | cut -d'|' -f1 | tr -d ' ')
+    fi
   fi
 
   # Fetch issue details including body
