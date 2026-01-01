@@ -682,6 +682,21 @@ _aw_sanitize_branch_name() {
   echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/-\+/-/g' | sed 's/^-//;s/-$//'
 }
 
+_aw_get_file_mtime() {
+  # Get file modification time in Unix timestamp format
+  # Works on both macOS/BSD and Linux
+  # Returns: Unix timestamp (seconds since epoch)
+  local file_path="$1"
+
+  if [[ "$(uname)" == "Darwin" ]] || [[ "$(uname)" == *"BSD"* ]]; then
+    # macOS/BSD syntax
+    stat -f %m "$file_path" 2>/dev/null
+  else
+    # Linux syntax
+    stat -c %Y "$file_path" 2>/dev/null
+  fi
+}
+
 # ============================================================================
 # Project configuration (git config based)
 # ============================================================================
@@ -1723,7 +1738,7 @@ _aw_list() {
     local commit_timestamp=$(git -C "$wt_path" log -1 --format=%ct 2>/dev/null)
 
     if [[ -z "$commit_timestamp" ]] || ! [[ "$commit_timestamp" =~ ^[0-9]+$ ]]; then
-      commit_timestamp=$(find "$wt_path" -maxdepth 3 -type f -not -path '*/.git/*' -exec stat -f %m {} \; 2>/dev/null | sort -rn | head -1)
+      commit_timestamp=$(find "$wt_path" -maxdepth 3 -type f -not -path '*/.git/*' -print0 2>/dev/null | while IFS= read -r -d '' file; do _aw_get_file_mtime "$file"; done | sort -rn | head -1)
     fi
 
     # Check if this worktree is linked to a merged/resolved issue or has a merged PR
@@ -2702,7 +2717,7 @@ _aw_resume() {
     local commit_timestamp=$(git -C "$wt_path" log -1 --format=%ct 2>/dev/null)
 
     if [[ -z "$commit_timestamp" ]] || ! [[ "$commit_timestamp" =~ ^[0-9]+$ ]]; then
-      commit_timestamp=$(find "$wt_path" -maxdepth 3 -type f -not -path '*/.git/*' -exec stat -f %m {} \; 2>/dev/null | sort -rn | head -1)
+      commit_timestamp=$(find "$wt_path" -maxdepth 3 -type f -not -path '*/.git/*' -print0 2>/dev/null | while IFS= read -r -d '' file; do _aw_get_file_mtime "$file"; done | sort -rn | head -1)
     fi
 
     # Build display string
@@ -2824,7 +2839,7 @@ _aw_cleanup_interactive() {
     local commit_timestamp=$(git -C "$wt_path" log -1 --format=%ct 2>/dev/null)
 
     if [[ -z "$commit_timestamp" ]] || ! [[ "$commit_timestamp" =~ ^[0-9]+$ ]]; then
-      commit_timestamp=$(find "$wt_path" -maxdepth 3 -type f -not -path '*/.git/*' -exec stat -f %m {} \; 2>/dev/null | sort -rn | head -1)
+      commit_timestamp=$(find "$wt_path" -maxdepth 3 -type f -not -path '*/.git/*' -print0 2>/dev/null | while IFS= read -r -d '' file; do _aw_get_file_mtime "$file"; done | sort -rn | head -1)
     fi
 
     # Check merge/close status
