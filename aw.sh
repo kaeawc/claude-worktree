@@ -78,6 +78,7 @@ _install_ai_tool() {
     "Install Claude Code (Anthropic)" \
     "Install Codex CLI (OpenAI)" \
     "Install Gemini CLI (Google)" \
+    "Install Google Jules CLI (Google)" \
     "Skip - don't use an AI tool" \
     "Cancel")
 
@@ -110,6 +111,15 @@ _install_ai_tool() {
       echo ""
       return 1
       ;;
+    "Install Google Jules CLI (Google)")
+      echo ""
+      gum style --foreground 6 "Install Google Jules CLI with:"
+      echo "  • npm:     npm install -g @google/jules"
+      echo ""
+      echo "For more information, visit: https://jules.google/docs"
+      echo ""
+      return 1
+      ;;
     "Skip - don't use an AI tool")
       AI_CMD=(skip)
       AI_CMD_NAME="none"
@@ -125,9 +135,11 @@ _resolve_ai_command() {
   local claude_available=false
   local codex_available=false
   local gemini_available=false
+  local jules_available=false
   local claude_path=""
   local codex_path=""
   local gemini_path=""
+  local jules_path=""
 
   # Check which tools are available and get their full paths
   claude_path=$(command -v claude 2>/dev/null)
@@ -138,6 +150,9 @@ _resolve_ai_command() {
 
   gemini_path=$(command -v gemini 2>/dev/null)
   [[ -n "$gemini_path" ]] && gemini_available=true
+
+  jules_path=$(command -v jules 2>/dev/null)
+  [[ -n "$jules_path" ]] && jules_available=true
 
   # Check for saved preference first
   local saved_pref=$(_load_ai_preference)
@@ -168,6 +183,14 @@ _resolve_ai_command() {
           return 0
         fi
         ;;
+      jules)
+        if [[ "$jules_available" == true ]]; then
+          AI_CMD=("$jules_path")
+          AI_CMD_NAME="Google Jules CLI"
+          AI_RESUME_CMD=("$jules_path")
+          return 0
+        fi
+        ;;
       skip)
         AI_CMD=(skip)
         AI_CMD_NAME="none"
@@ -183,6 +206,7 @@ _resolve_ai_command() {
   [[ "$claude_available" == true ]] && ((available_count++))
   [[ "$codex_available" == true ]] && ((available_count++))
   [[ "$gemini_available" == true ]] && ((available_count++))
+  [[ "$jules_available" == true ]] && ((available_count++))
 
   # If multiple tools are available, let user choose
   if [[ $available_count -gt 1 ]]; then
@@ -195,6 +219,7 @@ _resolve_ai_command() {
     [[ "$claude_available" == true ]] && options+=("Claude Code (Anthropic)")
     [[ "$codex_available" == true ]] && options+=("Codex CLI (OpenAI)")
     [[ "$gemini_available" == true ]] && options+=("Gemini CLI (Google)")
+    [[ "$jules_available" == true ]] && options+=("Google Jules CLI (Google)")
     options+=("Skip - don't use an AI tool")
 
     local choice=$(gum choose "${options[@]}")
@@ -214,6 +239,11 @@ _resolve_ai_command() {
         AI_CMD=("$gemini_path" --yolo)
         AI_CMD_NAME="Gemini CLI"
         AI_RESUME_CMD=("$gemini_path" --resume)
+        ;;
+      "Google Jules CLI (Google)")
+        AI_CMD=("$jules_path")
+        AI_CMD_NAME="Google Jules CLI"
+        AI_RESUME_CMD=("$jules_path")
         ;;
       "Skip - don't use an AI tool")
         AI_CMD=(skip)
@@ -240,6 +270,10 @@ _resolve_ai_command() {
         "Gemini CLI (Google)")
           _save_ai_preference "gemini"
           gum style --foreground 2 "Saved Gemini CLI as default"
+          ;;
+        "Google Jules CLI (Google)")
+          _save_ai_preference "jules"
+          gum style --foreground 2 "Saved Google Jules CLI as default"
           ;;
         "Skip - don't use an AI tool")
           _save_ai_preference "skip"
@@ -271,6 +305,13 @@ _resolve_ai_command() {
     AI_CMD=("$gemini_path" --yolo)
     AI_CMD_NAME="Gemini CLI"
     AI_RESUME_CMD=("$gemini_path" --resume)
+    return 0
+  fi
+
+  if [[ "$jules_available" == true ]]; then
+    AI_CMD=("$jules_path")
+    AI_CMD_NAME="Google Jules CLI"
+    AI_RESUME_CMD=("$jules_path")
     return 0
   fi
 
