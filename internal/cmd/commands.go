@@ -8,9 +8,10 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kaeawc/auto-worktree/internal/git"
 	"github.com/kaeawc/auto-worktree/internal/ui"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // RunInteractiveMenu displays the main interactive menu.
@@ -34,7 +35,11 @@ func RunInteractiveMenu() error {
 		return fmt.Errorf("failed to run menu: %w", err)
 	}
 
-	finalModel := m.(ui.MenuModel)
+	finalModel, ok := m.(ui.MenuModel)
+	if !ok {
+		return fmt.Errorf("unexpected model type")
+	}
+
 	choice := finalModel.Choice()
 
 	if choice == "" {
@@ -42,6 +47,10 @@ func RunInteractiveMenu() error {
 	}
 
 	// Route to the appropriate command handler
+	return routeMenuChoice(choice)
+}
+
+func routeMenuChoice(choice string) error {
 	switch choice {
 	case "new":
 		return RunNew()
@@ -89,12 +98,14 @@ func RunList() error {
 	for _, wt := range worktrees {
 		path := wt.Path
 		branch := wt.Branch
+
 		if branch == "" {
 			branch = fmt.Sprintf("(detached @ %s)", wt.HEAD[:7])
 		}
 
 		age := formatAge(wt.Age())
 		unpushed := ""
+
 		if wt.UnpushedCount > 0 {
 			unpushed = fmt.Sprintf("%d commits", wt.UnpushedCount)
 		} else if !wt.IsDetached {
@@ -110,6 +121,7 @@ func RunList() error {
 	}
 
 	fmt.Printf("\nTotal: %d worktree(s)\n", len(worktrees))
+
 	return nil
 }
 
@@ -120,58 +132,89 @@ func RunNew() error {
 		return fmt.Errorf("error: %w", err)
 	}
 
-	// Get branch name from args or interactively
-	var branchName string
-	useExisting := false
-
-	if len(os.Args) > 2 {
-		// Command line argument provided
-		arg := os.Args[2]
-		if arg == "--existing" {
-			if len(os.Args) < 4 {
-				return fmt.Errorf("branch name required after --existing")
-			}
-			useExisting = true
-			branchName = os.Args[3]
-		} else {
-			branchName = arg
-		}
-	} else {
-		// Interactive mode
-		input := ui.NewInput("Enter branch name:", "feature/my-feature or leave empty for random name")
-		p := tea.NewProgram(input)
-		m, err := p.Run()
-		if err != nil {
-			return fmt.Errorf("failed to get input: %w", err)
-		}
-
-		finalModel := m.(ui.InputModel)
-		if finalModel.Err() != nil {
-			return finalModel.Err()
-		}
-
-		branchName = finalModel.Value()
-		if branchName == "" {
-			// TODO: Generate random branch name
-			return fmt.Errorf("random branch names not yet implemented - please provide a branch name")
-		}
+	branchName, useExisting, err := getBranchInput()
+	if err != nil {
+		return err
 	}
 
 	// Sanitize branch name
 	sanitizedName := git.SanitizeBranchName(branchName)
 
 	// Check if worktree already exists for this branch
-	existingWt, err := repo.GetWorktreeForBranch(branchName)
-	if err != nil {
-		return fmt.Errorf("error checking for existing worktree: %w", err)
-	}
-	if existingWt != nil {
-		return fmt.Errorf("worktree already exists for branch %s at %s", branchName, existingWt.Path)
+	if err := checkExistingWorktree(repo, branchName); err != nil {
+		return err
 	}
 
 	// Construct worktree path
 	worktreePath := filepath.Join(repo.WorktreeBase, sanitizedName)
 
+	if err := createWorktree(repo, worktreePath, branchName, useExisting); err != nil {
+		return err
+	}
+
+	fmt.Printf("✓ Worktree created at: %s\n", worktreePath)
+	fmt.Printf("\nTo start working:\n")
+	fmt.Printf("  cd %s\n", worktreePath)
+
+	return nil
+}
+
+func getBranchInput() (branchName string, useExisting bool, err error) {
+	if len(os.Args) > 2 {
+		// Command line argument provided
+		arg := os.Args[2]
+		if arg == "--existing" {
+			if len(os.Args) < 4 {
+				return "", false, fmt.Errorf("branch name required after --existing")
+			}
+
+			return os.Args[3], true, nil
+		}
+
+		return arg, false, nil
+	}
+
+	// Interactive mode
+	input := ui.NewInput("Enter branch name:", "feature/my-feature or leave empty for random name")
+	p := tea.NewProgram(input)
+
+	m, err := p.Run()
+	if err != nil {
+		return "", false, fmt.Errorf("failed to get input: %w", err)
+	}
+
+	finalModel, ok := m.(ui.InputModel)
+	if !ok {
+		return "", false, fmt.Errorf("unexpected model type")
+	}
+
+	if finalModel.Err() != nil {
+		return "", false, finalModel.Err()
+	}
+
+	branchName = finalModel.Value()
+	if branchName == "" {
+		// TODO: Generate random branch name
+		return "", false, fmt.Errorf("random branch names not yet implemented - please provide a branch name")
+	}
+
+	return branchName, false, nil
+}
+
+func checkExistingWorktree(repo *git.Repository, branchName string) error {
+	existingWt, err := repo.GetWorktreeForBranch(branchName)
+	if err != nil {
+		return fmt.Errorf("error checking for existing worktree: %w", err)
+	}
+
+	if existingWt != nil {
+		return fmt.Errorf("worktree already exists for branch %s at %s", branchName, existingWt.Path)
+	}
+
+	return nil
+}
+
+func createWorktree(repo *git.Repository, worktreePath, branchName string, useExisting bool) error {
 	if useExisting {
 		// Check if branch exists
 		if !repo.BranchExists(branchName) {
@@ -179,31 +222,24 @@ func RunNew() error {
 		}
 
 		fmt.Printf("Creating worktree for existing branch: %s\n", branchName)
-		err = repo.CreateWorktree(worktreePath, branchName)
-	} else {
-		// Check if branch already exists
-		if repo.BranchExists(branchName) {
-			return fmt.Errorf("branch %s already exists. Use --existing flag to create worktree for it", branchName)
-		}
 
-		// Get default branch as base
-		defaultBranch, err := repo.GetDefaultBranch()
-		if err != nil {
-			return fmt.Errorf("error getting default branch: %w", err)
-		}
-
-		fmt.Printf("Creating worktree with new branch: %s (from %s)\n", branchName, defaultBranch)
-		err = repo.CreateWorktreeWithNewBranch(worktreePath, branchName, defaultBranch)
+		return repo.CreateWorktree(worktreePath, branchName)
 	}
 
+	// Check if branch already exists
+	if repo.BranchExists(branchName) {
+		return fmt.Errorf("branch %s already exists. Use --existing flag to create worktree for it", branchName)
+	}
+
+	// Get default branch as base
+	defaultBranch, err := repo.GetDefaultBranch()
 	if err != nil {
-		return fmt.Errorf("error creating worktree: %w", err)
+		return fmt.Errorf("error getting default branch: %w", err)
 	}
 
-	fmt.Printf("✓ Worktree created at: %s\n", worktreePath)
-	fmt.Printf("\nTo start working:\n")
-	fmt.Printf("  cd %s\n", worktreePath)
-	return nil
+	fmt.Printf("Creating worktree with new branch: %s (from %s)\n", branchName, defaultBranch)
+
+	return repo.CreateWorktreeWithNewBranch(worktreePath, branchName, defaultBranch)
 }
 
 // RunResume resumes the last worktree.
@@ -213,7 +249,7 @@ func RunResume() error {
 }
 
 // RunIssue works on an issue.
-func RunIssue(issueID string) error {
+func RunIssue(_ string) error {
 	// TODO: Implement issue workflow
 	return fmt.Errorf("'issue' command not yet implemented")
 }
@@ -225,7 +261,7 @@ func RunCreate() error {
 }
 
 // RunPR reviews a pull request.
-func RunPR(prNum string) error {
+func RunPR(_ string) error {
 	// TODO: Implement PR review workflow
 	return fmt.Errorf("'pr' command not yet implemented")
 }
@@ -273,6 +309,7 @@ func RunRemove(path string) error {
 	}
 
 	fmt.Printf("✓ Worktree removed\n")
+
 	return nil
 }
 
@@ -291,6 +328,7 @@ func RunPrune() error {
 	}
 
 	fmt.Println("✓ Pruned orphaned worktrees")
+
 	return nil
 }
 
@@ -300,11 +338,12 @@ func formatAge(d time.Duration) string {
 	hours := int(d.Hours()) % 24
 	minutes := int(d.Minutes()) % 60
 
-	if days > 0 {
+	switch {
+	case days > 0:
 		return fmt.Sprintf("%dd %dh", days, hours)
-	} else if hours > 0 {
+	case hours > 0:
 		return fmt.Sprintf("%dh %dm", hours, minutes)
-	} else {
+	default:
 		return fmt.Sprintf("%dm", minutes)
 	}
 }

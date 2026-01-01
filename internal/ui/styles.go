@@ -5,12 +5,11 @@ import "github.com/charmbracelet/lipgloss"
 // Common styles used across UI components
 var (
 	// Color palette
-	primaryColor   = lipgloss.Color("170") // Purple
-	successColor   = lipgloss.Color("42")  // Green
-	errorColor     = lipgloss.Color("196") // Red
-	warningColor   = lipgloss.Color("214") // Orange
-	subtleColor    = lipgloss.Color("241") // Gray
-	highlightColor = lipgloss.Color("228") // Yellow
+	primaryColor = lipgloss.Color("170") // Purple
+	successColor = lipgloss.Color("42")  // Green
+	errorColor   = lipgloss.Color("196") // Red
+	warningColor = lipgloss.Color("214") // Orange
+	subtleColor  = lipgloss.Color("241") // Gray
 
 	// Text styles
 	TitleStyle   = lipgloss.NewStyle().Bold(true).Foreground(primaryColor)

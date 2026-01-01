@@ -1,6 +1,6 @@
 module github.com/kaeawc/auto-worktree
 
-go 1.24.0
+go 1.25.5
 
 require (
 	github.com/charmbracelet/bubbles v0.21.0

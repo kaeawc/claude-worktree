@@ -17,72 +17,87 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+
 		return
 	}
 
-	command := os.Args[1]
+	if err := runCommand(os.Args[1]); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
 
-	var err error
-
+func runCommand(command string) error {
 	switch command {
 	case "version", "--version", "-v":
 		fmt.Printf("auto-worktree version %s\n", version)
-		return
+		return nil
 
 	case "help", "--help", "-h":
 		showHelp()
-		return
+		return nil
 
 	case "list", "ls":
-		err = cmd.RunList()
+		return cmd.RunList()
 
 	case "new", "create":
-		err = cmd.RunNew()
+		return cmd.RunNew()
 
 	case "resume":
-		err = cmd.RunResume()
+		return cmd.RunResume()
 
 	case "issue":
-		issueID := ""
-		if len(os.Args) > 2 {
-			issueID = os.Args[2]
-		}
-		err = cmd.RunIssue(issueID)
+		return runIssueCommand()
 
 	case "pr":
-		prNum := ""
-		if len(os.Args) > 2 {
-			prNum = os.Args[2]
-		}
-		err = cmd.RunPR(prNum)
+		return runPRCommand()
 
 	case "cleanup":
-		err = cmd.RunCleanup()
+		return cmd.RunCleanup()
 
 	case "settings":
-		err = cmd.RunSettings()
+		return cmd.RunSettings()
 
 	case "remove", "rm":
-		if len(os.Args) < 3 {
-			fmt.Fprintf(os.Stderr, "Error: worktree path required\n")
-			fmt.Fprintf(os.Stderr, "Usage: auto-worktree remove <path>\n")
-			os.Exit(1)
-		}
-		err = cmd.RunRemove(os.Args[2])
+		return runRemoveCommand()
 
 	case "prune":
-		err = cmd.RunPrune()
+		return cmd.RunPrune()
 
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", command)
 		showHelp()
 		os.Exit(1)
+		return nil
+	}
+}
+
+func runIssueCommand() error {
+	issueID := ""
+	if len(os.Args) > 2 {
+		issueID = os.Args[2]
 	}
 
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	return cmd.RunIssue(issueID)
+}
+
+func runPRCommand() error {
+	prNum := ""
+	if len(os.Args) > 2 {
+		prNum = os.Args[2]
+	}
+
+	return cmd.RunPR(prNum)
+}
+
+func runRemoveCommand() error {
+	if len(os.Args) < 3 {
+		fmt.Fprintf(os.Stderr, "Error: worktree path required\n")
+		fmt.Fprintf(os.Stderr, "Usage: auto-worktree remove <path>\n")
 		os.Exit(1)
 	}
+
+	return cmd.RunRemove(os.Args[2])
 }
 
 func showHelp() {

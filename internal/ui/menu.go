@@ -91,6 +91,7 @@ func (m MenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch keypress := msg.String(); keypress {
 		case "q", "ctrl+c", "esc":
 			m.quitting = true
+
 			return m, tea.Quit
 
 		case "enter":
@@ -104,14 +105,16 @@ func (m MenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
+
 	return m, cmd
 }
 
 // View renders the menu.
 func (m MenuModel) View() string {
 	if m.quitting && m.choice == "" {
-		return quitTextStyle.Render("Cancelled")
+		return quitTextStyle.Render("Canceled")
 	}
+
 	return "\n" + m.list.View()
 }
 
@@ -132,7 +135,7 @@ func (d menuItemDelegate) Render(w io.Writer, m list.Model, index int, listItem 
 		return
 	}
 
-	str := fmt.Sprintf("%s", i.Title())
+	str := i.Title()
 
 	fn := itemStyle.Render
 	if index == m.Index() {

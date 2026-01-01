@@ -37,19 +37,19 @@ func (m InputModel) Init() tea.Cmd {
 func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	if msg, ok := msg.(tea.KeyMsg); ok {
 		switch msg.Type {
 		case tea.KeyEnter:
 			m.value = m.textInput.Value()
 			return m, tea.Quit
 		case tea.KeyCtrlC, tea.KeyEsc:
-			m.err = fmt.Errorf("cancelled")
+			m.err = fmt.Errorf("canceled")
 			return m, tea.Quit
 		}
 	}
 
 	m.textInput, cmd = m.textInput.Update(msg)
+
 	return m, cmd
 }
 
