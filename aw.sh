@@ -1250,21 +1250,68 @@ _aw_pr() {
         if (.labels | length > 0) then " |" + ([.labels[].name] | map(" [\(.)]") | join(""))
         else ""
         end
-      )"')
+      ) | \(.headRefName)"')
 
     if [[ -z "$prs" ]]; then
       gum style --foreground 1 "No open PRs found or not in a GitHub repository"
       return 1
     fi
 
-    local selection=$(echo "$prs" | gum filter --placeholder "Type to filter PRs... (✓=passing ✗=failing ○=pending)")
+    # Detect which PRs have active worktrees
+    local active_prs=()
+    local worktree_list=$(git worktree list --porcelain 2>/dev/null | grep "^worktree " | sed 's/^worktree //')
+    if [[ -n "$worktree_list" ]]; then
+      while IFS= read -r wt_path; do
+        if [[ -d "$wt_path" ]]; then
+          local wt_branch=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+          # Check if worktree path contains pr-{number} pattern
+          if [[ "$wt_path" =~ pr-([0-9]+) ]]; then
+            active_prs+=("${BASH_REMATCH[1]}")
+          fi
+          # Also check by branch name in case PR uses the actual head branch
+          if [[ -n "$wt_branch" ]]; then
+            # Extract PR number from branch in prs data
+            local matching_pr=$(echo "$prs" | grep -E " \| ${wt_branch}\$" | sed 's/^#//' | cut -d'|' -f1 | tr -d ' ')
+            if [[ -n "$matching_pr" ]]; then
+              active_prs+=("$matching_pr")
+            fi
+          fi
+        fi
+      done <<< "$worktree_list"
+    fi
+
+    # Add highlighting for PRs with active worktrees
+    local highlighted_prs=""
+    while IFS= read -r pr_line; do
+      if [[ -n "$pr_line" ]]; then
+        # Extract PR number from the line
+        local line_pr=$(echo "$pr_line" | sed 's/^#//' | cut -d'|' -f1 | tr -d ' ')
+        # Check if this PR has an active worktree
+        local is_active=false
+        for active in "${active_prs[@]}"; do
+          if [[ "$active" == "$line_pr" ]]; then
+            is_active=true
+            break
+          fi
+        done
+        # Add indicator if active, and remove the headRefName we added temporarily
+        local display_line=$(echo "$pr_line" | sed 's/ | [^|]*$//')
+        if [[ "$is_active" == "true" ]]; then
+          highlighted_prs+="$(echo "$display_line" | sed 's/^#/● #/')"$'\n'
+        else
+          highlighted_prs+="$display_line"$'\n'
+        fi
+      fi
+    done <<< "$prs"
+
+    local selection=$(echo "$highlighted_prs" | gum filter --placeholder "Type to filter PRs... (● = active worktree, ✓=passing ✗=failing ○=pending)")
 
     if [[ -z "$selection" ]]; then
       gum style --foreground 3 "Cancelled"
       return 0
     fi
 
-    pr_num=$(echo "$selection" | sed 's/^#//' | cut -d'|' -f1 | tr -d ' ')
+    pr_num=$(echo "$selection" | sed 's/^● *//' | sed 's/^#//' | cut -d'|' -f1 | tr -d ' ')
   fi
 
   # Get PR details
@@ -1280,24 +1327,29 @@ _aw_pr() {
   local base_ref=$(echo "$pr_data" | jq -r '.baseRefName')
   local author=$(echo "$pr_data" | jq -r '.author.login')
 
-  echo ""
-  gum style --border rounded --padding "0 1" --border-foreground 5 -- \
-    "PR #${pr_num} by @${author}" \
-    "$title" \
-    "" \
-    "$head_ref -> $base_ref"
-
-  # Create worktree for the PR
+  # Check if a worktree already exists for this PR
+  local existing_worktree=""
   local worktree_name="pr-${pr_num}"
   local worktree_path="$_AW_WORKTREE_BASE/$worktree_name"
 
-  mkdir -p "$_AW_WORKTREE_BASE"
-
-  # Check if worktree already exists
+  # First check the standard pr-{number} path
   if [[ -d "$worktree_path" ]]; then
-    gum style --foreground 3 "Worktree already exists at $worktree_path"
-    if gum confirm "Switch to existing worktree?"; then
-      cd "$worktree_path" || return 1
+    existing_worktree="$worktree_path"
+  else
+    # Also check if the head_ref branch is used by another worktree
+    existing_worktree=$(git worktree list --porcelain 2>/dev/null | grep -A2 "^worktree " | grep -B1 "branch refs/heads/${head_ref}$" | head -1 | sed 's/^worktree //')
+  fi
+
+  # If an active worktree exists for this PR, offer to resume it
+  if [[ -n "$existing_worktree" ]]; then
+    echo ""
+    gum style --foreground 3 "Active worktree found for PR #$pr_num:"
+    echo "  $existing_worktree"
+    echo ""
+
+    if gum confirm "Resume existing worktree?"; then
+      cd "$existing_worktree" || return 1
+
       # Set terminal title for GitHub PR
       printf '\033]0;GitHub PR #%s - %s\007' "$pr_num" "$title"
 
@@ -1311,56 +1363,37 @@ _aw_pr() {
       fi
       return 0
     else
-      return 1
+      echo ""
+      gum style --foreground 3 "Continuing to create new worktree..."
+      echo ""
     fi
   fi
 
-  # Check if the head_ref branch is already used by another worktree
-  local existing_worktree=$(git worktree list --porcelain | grep -A2 "^worktree " | grep -B1 "branch refs/heads/${head_ref}$" | head -1 | sed 's/^worktree //')
+  echo ""
+  gum style --border rounded --padding "0 1" --border-foreground 5 -- \
+    "PR #${pr_num} by @${author}" \
+    "$title" \
+    "" \
+    "$head_ref -> $base_ref"
 
-  if [[ -n "$existing_worktree" ]]; then
-    echo ""
-    gum style --foreground 3 "Branch '${head_ref}' is already checked out in another worktree:"
-    echo "  $existing_worktree"
-    echo ""
+  # Create worktree for the PR
+  mkdir -p "$_AW_WORKTREE_BASE"
 
-    if gum confirm "Switch to existing worktree instead?"; then
-      cd "$existing_worktree" || return 1
-      # Set terminal title for GitHub PR
-      printf '\033]0;GitHub PR #%s - %s\007' "$pr_num" "$title"
+  # Fetch the PR branch and create worktree with proper tracking
+  gum spin --spinner dot --title "Fetching PR branch..." -- git fetch origin "pull/${pr_num}/head:${head_ref}" 2>/dev/null || \
+    git fetch origin "${head_ref}:${head_ref}" 2>/dev/null
 
-      _resolve_ai_command || return 1
+  # Create worktree with the PR branch
+  if ! gum spin --spinner dot --title "Creating worktree..." -- git worktree add "$worktree_path" "$head_ref" 2>/dev/null; then
+    # If failed (likely because branch is already checked out elsewhere), try detached
+    gum style --foreground 6 "Branch already in use, creating detached worktree for PR review..."
 
-      if [[ "${AI_CMD[1]}" != "skip" ]]; then
-        gum style --foreground 2 "Starting $AI_CMD_NAME for PR review..."
-        "${AI_CMD[@]}"
-      else
-        gum style --foreground 3 "Skipping AI tool - worktree is ready for manual work"
-      fi
-      return 0
-    else
-      gum style --foreground 6 "Creating detached worktree for PR review..."
-
-      # Fetch the PR and create a detached worktree
-      if ! gum spin --spinner dot --title "Fetching PR..." -- git fetch origin "pull/${pr_num}/head" 2>/dev/null; then
-        gum style --foreground 1 "Failed to fetch PR"
-        return 1
-      fi
-
-      # Create detached worktree at FETCH_HEAD
-      if ! gum spin --spinner dot --title "Creating worktree..." -- git worktree add --detach "$worktree_path" FETCH_HEAD; then
-        gum style --foreground 1 "Failed to create worktree"
-        return 1
-      fi
+    if ! gum spin --spinner dot --title "Fetching PR..." -- git fetch origin "pull/${pr_num}/head" 2>/dev/null; then
+      gum style --foreground 1 "Failed to fetch PR"
+      return 1
     fi
-  else
-    # Normal path: branch not in use, create worktree with it
-    # Fetch the PR branch and create worktree with proper tracking
-    gum spin --spinner dot --title "Fetching PR branch..." -- git fetch origin "pull/${pr_num}/head:${head_ref}" 2>/dev/null || \
-      git fetch origin "${head_ref}:${head_ref}" 2>/dev/null
 
-    # Create worktree with the PR branch
-    if ! gum spin --spinner dot --title "Creating worktree..." -- git worktree add "$worktree_path" "$head_ref"; then
+    if ! gum spin --spinner dot --title "Creating worktree..." -- git worktree add --detach "$worktree_path" FETCH_HEAD; then
       gum style --foreground 1 "Failed to create worktree"
       return 1
     fi
