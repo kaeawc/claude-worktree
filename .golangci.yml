@@ -1,5 +1,7 @@
-# golangci-lint configuration for auto-worktree
+# golangci-lint v2 configuration for auto-worktree
 # https://golangci-lint.run/usage/configuration/
+
+version: "2"
 
 run:
   timeout: 5m
@@ -16,18 +18,16 @@ output:
   sort-results: true
 
 linters:
-  enable:
+  enabled:
     # Enabled by default
     - errcheck      # Check for unchecked errors
     - gosimple      # Simplify code
     - govet         # Vet examines Go source code
     - ineffassign   # Detect ineffectual assignments
-    - staticcheck   # Go static analysis tool
+    - staticcheck   # Go static analysis tool (includes stylecheck, gosimple)
     - unused        # Check for unused constants, variables, functions and types
 
     # Additional recommended linters
-    - gofmt         # Check whether code was gofmt-ed
-    - goimports     # Check import statements are formatted according to the 'goimport' command
     - misspell      # Finds commonly misspelled English words
     - revive        # Fast, configurable, extensible, flexible, and beautiful linter for Go
     - unconvert     # Remove unnecessary type conversions
@@ -36,7 +36,6 @@ linters:
     - goconst       # Find repeated strings that could be replaced by a constant
     - dupl          # Tool for code clone detection
     - gosec         # Inspect source code for security problems
-    - stylecheck    # Stylecheck is a replacement for golint
     - gocritic      # Provides diagnostics that check for bugs, performance and style issues
     - gocognit      # Compute and check the cognitive complexity of functions
     - bodyclose     # Check whether HTTP response body is closed successfully
@@ -47,7 +46,7 @@ linters:
     - whitespace    # Detection of leading and trailing whitespace
     - wsl           # Whitespace Linter - Forces you to use empty lines!
 
-  disable:
+  disabled:
     # Disabled linters (can be enabled incrementally)
     - godox         # Detect FIXME, TODO and other comment tags
     - testpackage   # Makes you use a separate _test package
@@ -66,95 +65,107 @@ linters:
     - maintidx      # Measures the maintainability index of each function
     - mnd           # Detects magic numbers (replaces gomnd)
 
-linters-settings:
-  errcheck:
-    check-type-assertions: true
-    check-blank: true
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
 
-  govet:
-    enable-all: true
-    disable:
-      - shadow  # Can be noisy, enable later if needed
+    govet:
+      enable-all: true
+      disable:
+        - shadow  # Can be noisy, enable later if needed
 
-  gofmt:
-    simplify: true
+    misspell:
+      locale: US
 
-  goimports:
-    local-prefixes: github.com/kaeawc/auto-worktree
+    revive:
+      confidence: 0.8
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+        - name: if-return
+        - name: increment-decrement
+        - name: var-naming
+        - name: var-declaration
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: errorf
+        - name: empty-block
+        - name: superfluous-else
+        - name: unused-parameter
+        - name: unreachable-code
+        - name: redefines-builtin-id
 
-  misspell:
-    locale: US
+    gocyclo:
+      min-complexity: 15
 
-  revive:
-    confidence: 0.8
-    rules:
-      - name: blank-imports
-      - name: context-as-argument
-      - name: context-keys-type
-      - name: dot-imports
-      - name: error-return
-      - name: error-strings
-      - name: error-naming
-      - name: exported
-      - name: if-return
-      - name: increment-decrement
-      - name: var-naming
-      - name: var-declaration
-      - name: package-comments
-      - name: range
-      - name: receiver-naming
-      - name: time-naming
-      - name: unexported-return
-      - name: indent-error-flow
-      - name: errorf
-      - name: empty-block
-      - name: superfluous-else
-      - name: unused-parameter
-      - name: unreachable-code
-      - name: redefines-builtin-id
+    gocognit:
+      min-complexity: 20
 
-  gocyclo:
-    min-complexity: 15
+    dupl:
+      threshold: 100
 
-  gocognit:
-    min-complexity: 20
+    goconst:
+      min-len: 3
+      min-occurrences: 3
 
-  dupl:
-    threshold: 100
+    gosec:
+      excludes:
+        - G204  # Audit use of command execution - we need this for git commands
 
-  goconst:
-    min-len: 3
-    min-occurrences: 3
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+      disabled-checks:
+        - hugeParam  # Can be noisy
+        - rangeValCopy  # Can be noisy
 
-  gosec:
-    excludes:
-      - G204  # Audit use of command execution - we need this for git commands
+    whitespace:
+      multi-if: false
+      multi-func: false
 
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - style
-      - performance
-    disabled-checks:
-      - hugeParam  # Can be noisy
-      - rangeValCopy  # Can be noisy
+    wsl:
+      allow-assign-and-anything: true
+      allow-multiline-assign: true
+      allow-cuddle-declarations: true
+      allow-trailing-comment: true
+      force-case-trailing-whitespace: 0
 
-  whitespace:
-    multi-if: false
-    multi-func: false
+  exclusions:
+    paths:
+      - vendor
+      - .git
 
-  wsl:
-    allow-assign-and-anything: true
-    allow-multiline-assign: true
-    allow-cuddle-declarations: true
-    allow-trailing-comment: true
-    force-case-trailing-whitespace: 0
+formatters:
+  enabled:
+    - gofmt         # Check whether code was gofmt-ed
+    - goimports     # Check import statements are formatted according to the 'goimport' command
+
+  settings:
+    gofmt:
+      simplify: true
+
+    goimports:
+      local-prefixes: github.com/kaeawc/auto-worktree
+
+  exclusions:
+    paths:
+      - vendor
+      - .git
 
 issues:
-  exclude-dirs:
-    - vendor
-    - .git
-
   uniq-by-line: true
 
   exclude-rules:
