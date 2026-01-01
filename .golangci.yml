@@ -11,20 +11,18 @@ run:
 
 output:
   formats:
-    colored-line-number:
+    text:
       path: stdout
-  print-issued-lines: true
-  print-linter-name: true
-  sort-results: true
 
 linters:
-  enabled:
+  default: none
+  enable:
     # Enabled by default
     - errcheck      # Check for unchecked errors
     - gosimple      # Simplify code
     - govet         # Vet examines Go source code
     - ineffassign   # Detect ineffectual assignments
-    - staticcheck   # Go static analysis tool (includes stylecheck, gosimple)
+    - staticcheck   # Go static analysis tool
     - unused        # Check for unused constants, variables, functions and types
 
     # Additional recommended linters
@@ -40,14 +38,13 @@ linters:
     - gocognit      # Compute and check the cognitive complexity of functions
     - bodyclose     # Check whether HTTP response body is closed successfully
     - noctx         # Find sending http request without context.Context
-    - copyloopvar   # Check for pointers to enclosing loop variables (replaces exportloopref)
+    - copyloopvar   # Check for pointers to enclosing loop variables
     - prealloc      # Find slice declarations that could potentially be pre-allocated
     - predeclared   # Find code that shadows one of Go's predeclared identifiers
     - whitespace    # Detection of leading and trailing whitespace
     - wsl           # Whitespace Linter - Forces you to use empty lines!
 
-  disabled:
-    # Disabled linters (can be enabled incrementally)
+  disable:
     - godox         # Detect FIXME, TODO and other comment tags
     - testpackage   # Makes you use a separate _test package
     - nlreturn      # Checks for a new line before return and branch statements
@@ -63,7 +60,7 @@ linters:
     - gochecknoinits   # Check that no init functions exist
     - nestif        # Reports deeply nested if statements
     - maintidx      # Measures the maintainability index of each function
-    - mnd           # Detects magic numbers (replaces gomnd)
+    - mnd           # Detects magic numbers
 
   settings:
     errcheck:
@@ -72,14 +69,14 @@ linters:
 
     govet:
       enable-all: true
-      disable:
-        - shadow  # Can be noisy, enable later if needed
+      settings:
+        shadow:
+          strict: false
 
     misspell:
       locale: US
 
     revive:
-      confidence: 0.8
       rules:
         - name: blank-imports
         - name: context-as-argument
@@ -120,28 +117,60 @@ linters:
       min-occurrences: 3
 
     gosec:
-      excludes:
+      exclude-ids:
         - G204  # Audit use of command execution - we need this for git commands
 
     gocritic:
-      enabled-tags:
-        - diagnostic
-        - style
-        - performance
-      disabled-checks:
-        - hugeParam  # Can be noisy
-        - rangeValCopy  # Can be noisy
+      enabled-checks:
+        - appendAssign
+        - assignOp
+        - boolExprSimplify
+        - captLocal
+        - caseOrder
+        - commentedOutCode
+        - defaultCaseOrder
+        - dupArg
+        - dupBranchBody
+        - dupCase
+        - dupSubExpr
+        - elseif
+        - emptyFallthrough
+        - exitAfterDefer
+        - flagDeref
+        - flagName
+        - hexLiteral
+        - ifElseChain
+        - indexAlloc
+        - methodExprCall
+        - nilValReturn
+        - offBy1
+        - rangeExprCopy
+        - rangeValCopy
+        - regexpMust
+        - singleCaseSwitch
+        - sloppyLen
+        - switchTrue
+        - typeSwitchVar
+        - underef
+        - unlabelStmt
+        - unlambda
+        - unslice
+        - valSwap
+        - wrapperFunc
 
     whitespace:
       multi-if: false
       multi-func: false
 
     wsl:
-      allow-assign-and-anything: true
-      allow-multiline-assign: true
+      allow-assign-and-call: true
       allow-cuddle-declarations: true
+      allow-multiline-assign: true
+      allow-separated-leading-comment: false
       allow-trailing-comment: true
       force-case-trailing-whitespace: 0
+      force-err-cuddling: false
+      force-short-decl-cuddling: false
 
   exclusions:
     paths:
@@ -149,16 +178,17 @@ linters:
       - .git
 
 formatters:
-  enabled:
-    - gofmt         # Check whether code was gofmt-ed
-    - goimports     # Check import statements are formatted according to the 'goimport' command
+  enable:
+    - gofmt
+    - goimports
 
   settings:
     gofmt:
       simplify: true
 
     goimports:
-      local-prefixes: github.com/kaeawc/auto-worktree
+      local-prefixes:
+        - github.com/kaeawc/auto-worktree
 
   exclusions:
     paths:
@@ -166,33 +196,29 @@ formatters:
       - .git
 
 issues:
-  uniq-by-line: true
-
-  exclude-rules:
-    # Exclude some linters from running on tests files
-    - path: _test\.go
-      linters:
-        - gocyclo
-        - errcheck
-        - dupl
-        - gosec
-        - goconst
-        - wsl
-
-    # Exclude known linters from partially hard-vendored code
-    - path: internal/hmac/
-      text: "weak cryptographic primitive"
-      linters:
-        - gosec
-
-  # Maximum issues count per one linter
   max-issues-per-linter: 0
-
-  # Maximum count of issues with the same text
   max-same-issues: 0
-
-  # Show only new issues
+  uniq-by-line: true
   new: false
-
-  # Fix found issues (if it's supported by the linter)
   fix: false
+
+  exclusions:
+    paths:
+      - vendor
+      - .git
+    rules:
+      # Exclude some linters from running on tests files
+      - path: _test\.go
+        linters:
+          - gocyclo
+          - errcheck
+          - dupl
+          - gosec
+          - goconst
+          - wsl
+
+      # Exclude known linters from partially hard-vendored code
+      - path: internal/hmac/
+        text: "weak cryptographic primitive"
+        linters:
+          - gosec
