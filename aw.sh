@@ -2919,7 +2919,7 @@ _aw_manual_template_walkthrough() {
   echo ""
 
   body=$(echo "$template_content" | gum write --width 80 --height 20 \
-    --placeholder "Fill in the template sections...")
+    --placeholder "Fill in the template sections (Ctrl+D when done, Ctrl+C to cancel)...")
 
   # Check if user cancelled
   if [[ $? -ne 0 ]]; then
@@ -2982,8 +2982,14 @@ Output the issue body in markdown format."
   gum style --foreground 6 "Generating issue content with ${AI_CMD_NAME}..."
   echo ""
 
-  # Create output file
-  local output_file=$(mktemp --suffix=.md)
+  # Create output file (BSD/macOS compatible)
+  local output_file=$(mktemp /tmp/aw_issue_XXXXXX.md)
+
+  # Check if mktemp succeeded
+  if [[ -z "$output_file" ]] || [[ ! -f "$output_file" ]]; then
+    gum style --foreground 3 "Failed to create temporary file"
+    return 1
+  fi
 
   # Execute AI in headless mode with -p flag
   if "${AI_CMD[@]}" -p "$ai_prompt" > "$output_file" 2>&1; then
@@ -2993,7 +2999,7 @@ Output the issue body in markdown format."
       return 0
     else
       gum style --foreground 3 "AI generated empty output"
-      rm "$output_file"
+      [[ -n "$output_file" ]] && rm "$output_file"
       return 1
     fi
   else
@@ -3001,7 +3007,7 @@ Output the issue body in markdown format."
     gum style --foreground 3 "AI generation failed"
     gum style --foreground 3 "Removing ${AI_CMD_NAME} as default AI tool"
     git config --unset auto-worktree.ai-tool 2>/dev/null || true
-    rm "$output_file"
+    [[ -n "$output_file" ]] && rm "$output_file"
     return 1
   fi
 }
@@ -3065,7 +3071,7 @@ _aw_fill_template_section_by_section() {
 
     # Ask user to provide content for this section, pre-populated with template content
     local section_content=$(echo "$section_template_content" | gum write --width 80 --height 15 \
-      --placeholder "Fill in or edit this section (Ctrl+D when done)" \
+      --placeholder "Fill in or edit this section (Ctrl+D when done, Ctrl+C to cancel)" \
       --char-limit 0)
 
     # Check if user cancelled
@@ -3269,7 +3275,8 @@ _aw_create_issue() {
               # Let user review and edit the AI-generated content
               echo ""
               gum style --foreground 6 "AI-generated content (review and edit if needed):"
-              body=$(cat "$ai_output_file" | gum write --width 80 --height 20)
+              body=$(cat "$ai_output_file" | gum write --width 80 --height 20 \
+                --placeholder "Review and edit AI-generated content (Ctrl+D when done, Ctrl+C to cancel)...")
               if [[ $? -ne 0 ]]; then
                 rm "$ai_output_file"
                 gum style --foreground 3 "Issue creation cancelled"
@@ -3280,7 +3287,7 @@ _aw_create_issue() {
               # Fall back to manual input
               echo ""
               body=$(gum write --width 80 --height 15 \
-                --placeholder "Enter issue description (Ctrl+D to finish)...")
+                --placeholder "Enter issue description (Ctrl+D to finish, Ctrl+C to cancel)...")
               if [[ $? -ne 0 ]]; then
                 gum style --foreground 3 "Issue creation cancelled"
                 return 0
@@ -3289,7 +3296,7 @@ _aw_create_issue() {
           else
             echo ""
             body=$(gum write --width 80 --height 15 \
-              --placeholder "Enter issue description (Ctrl+D to finish)...")
+              --placeholder "Enter issue description (Ctrl+D to finish, Ctrl+C to cancel)...")
             if [[ $? -ne 0 ]]; then
               gum style --foreground 3 "Issue creation cancelled"
               return 0
@@ -3308,7 +3315,8 @@ _aw_create_issue() {
                 # Let user review and edit AI-generated content
                 echo ""
                 gum style --foreground 6 "AI-generated content (review and edit if needed):"
-                body=$(cat "$ai_output_file" | gum write --width 80 --height 20 --char-limit 0)
+                body=$(cat "$ai_output_file" | gum write --width 80 --height 20 --char-limit 0 \
+                  --placeholder "Review and edit AI-generated content (Ctrl+D when done, Ctrl+C to cancel)...")
                 if [[ $? -ne 0 ]]; then
                   rm "$ai_output_file"
                   gum style --foreground 3 "Issue creation cancelled"
@@ -3356,7 +3364,8 @@ _aw_create_issue() {
           if [[ -n "$ai_output_file" ]] && [[ -f "$ai_output_file" ]]; then
             echo ""
             gum style --foreground 6 "AI-generated content (review and edit if needed):"
-            body=$(cat "$ai_output_file" | gum write --width 80 --height 20)
+            body=$(cat "$ai_output_file" | gum write --width 80 --height 20 \
+              --placeholder "Review and edit AI-generated content (Ctrl+D when done, Ctrl+C to cancel)...")
             if [[ $? -ne 0 ]]; then
               rm "$ai_output_file"
               gum style --foreground 3 "Issue creation cancelled"
@@ -3366,7 +3375,7 @@ _aw_create_issue() {
           else
             echo ""
             body=$(gum write --width 80 --height 15 \
-              --placeholder "Enter issue description (Ctrl+D to finish)...")
+              --placeholder "Enter issue description (Ctrl+D to finish, Ctrl+C to cancel)...")
             if [[ $? -ne 0 ]]; then
               gum style --foreground 3 "Issue creation cancelled"
               return 0
@@ -3390,7 +3399,8 @@ _aw_create_issue() {
         if [[ -n "$ai_output_file" ]] && [[ -f "$ai_output_file" ]]; then
           echo ""
           gum style --foreground 6 "AI-generated content (review and edit if needed):"
-          body=$(cat "$ai_output_file" | gum write --width 80 --height 20)
+          body=$(cat "$ai_output_file" | gum write --width 80 --height 20 \
+            --placeholder "Review and edit AI-generated content (Ctrl+D when done, Ctrl+C to cancel)...")
           if [[ $? -ne 0 ]]; then
             rm "$ai_output_file"
             gum style --foreground 3 "Issue creation cancelled"
@@ -3416,6 +3426,26 @@ _aw_create_issue() {
         fi
       fi
     fi
+  fi
+
+  # Show preview and confirm before creating the issue
+  echo ""
+  gum style --foreground 6 --bold "Issue Preview:"
+  echo ""
+  gum style --foreground 4 "Title: $title"
+  echo ""
+  gum style --foreground 8 "Body:"
+  echo "$body" | head -20
+  if [[ $(echo "$body" | wc -l) -gt 20 ]]; then
+    echo ""
+    gum style --foreground 8 "(... truncated, full content will be included in issue)"
+  fi
+  echo ""
+
+  # Confirm before creating
+  if ! gum confirm "Create this issue?"; then
+    gum style --foreground 3 "Issue creation cancelled"
+    return 0
   fi
 
   # Create the issue
