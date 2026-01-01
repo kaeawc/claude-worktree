@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+#
+# Pre-commit hook for Go code validation
+# This hook runs gofmt and golangci-lint on all staged .go files before allowing a commit
+#
+# To install this hook, run from the repository root:
+#   scripts/go-hooks/install_pre_commit_hook.sh
+#
+# To bypass this hook for a single commit (not recommended):
+#   git commit --no-verify
+#
+
+# Get the repository root
+repo_root=$(git rev-parse --show-toplevel)
+
+# Get list of staged .go files
+staged_files=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
+
+if [[ -z "$staged_files" ]]; then
+  # No Go files staged, skip validation
+  exit 0
+fi
+
+echo "Running Go code validation on staged files..."
+
+# Check if gofmt is available (comes with Go)
+if ! command -v gofmt &>/dev/null; then
+  echo "Warning: gofmt is not installed, skipping validation" >&2
+  echo "Please install Go from https://go.dev/dl/" >&2
+  exit 0
+fi
+
+# Run gofmt check on each staged file
+echo "Checking code formatting with gofmt..."
+failed=0
+unformatted_files=""
+while IFS= read -r file; do
+  if [[ -f "$repo_root/$file" ]]; then
+    # Check if file needs formatting
+    if ! gofmt -l "$repo_root/$file" | grep -q .; then
+      continue
+    fi
+    unformatted_files="$unformatted_files  $file\n"
+    failed=1
+  fi
+done <<< "$staged_files"
+
+if [[ $failed -eq 1 ]]; then
+  echo "" >&2
+  echo "Error: The following files are not formatted with gofmt:" >&2
+  echo -e "$unformatted_files" >&2
+  echo "Run 'make fmt' or 'gofmt -w .' to fix formatting" >&2
+  exit 1
+fi
+
+# Check if golangci-lint is installed
+if command -v golangci-lint &>/dev/null; then
+  echo "Running golangci-lint on staged files..."
+
+  # Create a temporary file list for golangci-lint
+  temp_file_list=$(mktemp)
+  echo "$staged_files" | while IFS= read -r file; do
+    echo "$repo_root/$file" >> "$temp_file_list"
+  done
+
+  # Run golangci-lint on the repository (it will respect .golangci.yml)
+  # We run on the whole repo because linters need context from other files
+  if ! golangci-lint run --timeout=3m "$repo_root/..."; then
+    rm -f "$temp_file_list"
+    echo "" >&2
+    echo "golangci-lint validation failed!" >&2
+    echo "Please fix the issues above or use 'git commit --no-verify' to bypass (not recommended)" >&2
+    exit 1
+  fi
+
+  rm -f "$temp_file_list"
+else
+  echo "Warning: golangci-lint is not installed, skipping lint validation" >&2
+  echo "To install: brew install golangci-lint (macOS) or see https://golangci-lint.run/usage/install/" >&2
+fi
+
+echo "Go validation passed!"
+exit 0
