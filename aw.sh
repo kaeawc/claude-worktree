@@ -3,12 +3,17 @@
 # Source this file from ~/.zshrc to load the shell function `auto-worktree`
 #
 # Usage:
-#   auto-worktree              # Interactive menu
-#   auto-worktree new          # Create new worktree
-#   auto-worktree resume       # Resume existing worktree
-#   auto-worktree issue [num]  # Work on a GitHub issue
-#   auto-worktree pr [num]     # Review a GitHub PR
-#   auto-worktree list         # List existing worktrees
+#   auto-worktree                    # Interactive menu
+#   auto-worktree new                # Create new worktree
+#   auto-worktree resume             # Resume existing worktree
+#   auto-worktree issue [id]         # Work on an issue (GitHub #123 or JIRA PROJ-123)
+#   auto-worktree pr [num]           # Review a GitHub PR
+#   auto-worktree list               # List existing worktrees
+#
+# Configuration (per-repository via git config):
+#   git config auto-worktree.issue-provider github|jira  # Set issue provider
+#   git config auto-worktree.jira-server <URL>           # Set JIRA server URL
+#   git config auto-worktree.jira-project <KEY>          # Set default JIRA project
 
 # ============================================================================
 # Dependencies check
@@ -21,13 +26,12 @@ _aw_check_deps() {
     missing+=("gum (install with: brew install gum)")
   fi
 
-  if ! command -v gh &> /dev/null; then
-    missing+=("gh (install with: brew install gh)")
-  fi
-
   if ! command -v jq &> /dev/null; then
     missing+=("jq (install with: brew install jq)")
   fi
+
+  # Note: gh and jira are optional based on project configuration
+  # We'll check for them when needed based on the issue provider setting
 
   if [[ ${#missing[@]} -gt 0 ]]; then
     echo "Missing required dependencies:"
@@ -36,6 +40,37 @@ _aw_check_deps() {
     done
     return 1
   fi
+
+  return 0
+}
+
+_aw_check_issue_provider_deps() {
+  # Check for issue provider specific dependencies
+  local provider="$1"
+
+  case "$provider" in
+    "github")
+      if ! command -v gh &> /dev/null; then
+        gum style --foreground 1 "Error: GitHub CLI (gh) is required for GitHub issue integration"
+        echo "Install with: brew install gh"
+        return 1
+      fi
+      ;;
+    "jira")
+      if ! command -v jira &> /dev/null; then
+        gum style --foreground 1 "Error: JIRA CLI is required for JIRA issue integration"
+        echo ""
+        echo "Install with:"
+        echo "  • macOS:     brew install ankitpokhrel/jira-cli/jira-cli"
+        echo "  • Linux:     See https://github.com/ankitpokhrel/jira-cli#installation"
+        echo "  • Docker:    docker pull ghcr.io/ankitpokhrel/jira-cli:latest"
+        echo ""
+        echo "After installation, configure JIRA:"
+        echo "  jira init"
+        return 1
+      fi
+      ;;
+  esac
 
   return 0
 }
@@ -431,6 +466,116 @@ _aw_sanitize_branch_name() {
   echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/-\+/-/g' | sed 's/^-//;s/-$//'
 }
 
+# ============================================================================
+# Project configuration (git config based)
+# ============================================================================
+
+_aw_get_issue_provider() {
+  # Get the configured issue provider (github or jira)
+  # Returns: github, jira, or empty string if not configured
+  git config --get auto-worktree.issue-provider 2>/dev/null || echo ""
+}
+
+_aw_set_issue_provider() {
+  # Set the issue provider for this repository
+  local provider="$1"
+
+  if [[ "$provider" != "github" ]] && [[ "$provider" != "jira" ]]; then
+    gum style --foreground 1 "Error: Invalid provider. Must be 'github' or 'jira'"
+    return 1
+  fi
+
+  git config auto-worktree.issue-provider "$provider"
+  gum style --foreground 2 "✓ Issue provider set to: $provider"
+}
+
+_aw_get_jira_server() {
+  # Get the configured JIRA server URL
+  git config --get auto-worktree.jira-server 2>/dev/null || echo ""
+}
+
+_aw_set_jira_server() {
+  # Set the JIRA server URL for this repository
+  local server="$1"
+  git config auto-worktree.jira-server "$server"
+  gum style --foreground 2 "✓ JIRA server set to: $server"
+}
+
+_aw_get_jira_project() {
+  # Get the configured default JIRA project key
+  git config --get auto-worktree.jira-project 2>/dev/null || echo ""
+}
+
+_aw_set_jira_project() {
+  # Set the default JIRA project key for this repository
+  local project="$1"
+  git config auto-worktree.jira-project "$project"
+  gum style --foreground 2 "✓ JIRA project set to: $project"
+}
+
+_aw_configure_jira() {
+  # Interactive configuration for JIRA
+  echo ""
+  gum style --foreground 6 "Configure JIRA for this repository"
+  echo ""
+
+  # Get JIRA server URL
+  local current_server=$(_aw_get_jira_server)
+  local server=$(gum input --placeholder "https://your-company.atlassian.net" \
+    --value "$current_server" \
+    --header "JIRA Server URL:")
+
+  if [[ -z "$server" ]]; then
+    gum style --foreground 3 "Cancelled"
+    return 1
+  fi
+
+  _aw_set_jira_server "$server"
+
+  # Get default JIRA project key
+  local current_project=$(_aw_get_jira_project)
+  local project=$(gum input --placeholder "PROJ" \
+    --value "$current_project" \
+    --header "Default JIRA Project Key (optional, can filter issues):")
+
+  if [[ -n "$project" ]]; then
+    _aw_set_jira_project "$project"
+  fi
+
+  echo ""
+  gum style --foreground 2 "JIRA configuration complete!"
+  echo ""
+  echo "Note: Make sure you've configured the JIRA CLI:"
+  echo "  jira init"
+  echo ""
+}
+
+_aw_prompt_issue_provider() {
+  # Prompt user to choose issue provider if not configured
+  echo ""
+  gum style --foreground 6 "Issue provider not configured for this repository"
+  echo ""
+
+  local choice=$(gum choose \
+    "GitHub Issues" \
+    "JIRA" \
+    "Cancel")
+
+  case "$choice" in
+    "GitHub Issues")
+      _aw_set_issue_provider "github"
+      ;;
+    "JIRA")
+      _aw_set_issue_provider "jira"
+      _aw_configure_jira
+      ;;
+    *)
+      gum style --foreground 3 "Cancelled"
+      return 1
+      ;;
+  esac
+}
+
 _aw_setup_environment() {
   # Automatically set up the development environment based on detected project files
   local worktree_path="$1"
@@ -648,6 +793,39 @@ _aw_extract_issue_number() {
   echo "$branch" | grep -oE '(^|[^0-9])([0-9]+)' | head -1 | grep -oE '[0-9]+' | head -1
 }
 
+_aw_extract_jira_key() {
+  # Extract JIRA key from branch name patterns like:
+  # work/PROJ-123-description, PROJ-456-fix-something
+  # JIRA keys are typically PROJECT-NUMBER format
+  local branch="$1"
+  echo "$branch" | grep -oE '[A-Z][A-Z0-9]+-[0-9]+' | head -1
+}
+
+_aw_extract_issue_id() {
+  # Extract either GitHub issue number or JIRA key from branch name
+  # Returns the ID and sets _AW_DETECTED_ISSUE_TYPE to "github" or "jira"
+  local branch="$1"
+
+  # Try JIRA key first (more specific pattern)
+  local jira_key=$(_aw_extract_jira_key "$branch")
+  if [[ -n "$jira_key" ]]; then
+    _AW_DETECTED_ISSUE_TYPE="jira"
+    echo "$jira_key"
+    return 0
+  fi
+
+  # Try GitHub issue number
+  local issue_num=$(_aw_extract_issue_number "$branch")
+  if [[ -n "$issue_num" ]]; then
+    _AW_DETECTED_ISSUE_TYPE="github"
+    echo "$issue_num"
+    return 0
+  fi
+
+  _AW_DETECTED_ISSUE_TYPE=""
+  return 1
+}
+
 _aw_check_issue_merged() {
   # Check if an issue or its linked PR was merged into main
   # Returns 0 if merged, 1 if not merged or error
@@ -728,6 +906,97 @@ _aw_check_branch_pr_merged() {
   fi
 
   return 1
+}
+
+# ============================================================================
+# JIRA integration functions
+# ============================================================================
+
+_aw_jira_check_resolved() {
+  # Check if a JIRA issue is resolved/done/closed
+  # Returns 0 if resolved, 1 if not resolved or error
+  local jira_key="$1"
+
+  if [[ -z "$jira_key" ]]; then
+    return 1
+  fi
+
+  # Get issue status using JIRA CLI
+  local status=$(jira issue view "$jira_key" --plain --columns status 2>/dev/null | tail -1 | awk '{print $NF}')
+
+  if [[ -z "$status" ]]; then
+    return 1
+  fi
+
+  # Common resolved status names in JIRA
+  # Note: Status names can vary by JIRA configuration, but these are common
+  case "$status" in
+    Done|Closed|Resolved|Complete|Completed)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+_aw_jira_list_issues() {
+  # List JIRA issues using JQL
+  # Returns formatted issue list similar to GitHub issues
+  local project=$(_aw_get_jira_project)
+  local jql="status != Done AND status != Closed AND status != Resolved"
+
+  # If a default project is configured, filter by it
+  if [[ -n "$project" ]]; then
+    jql="project = $project AND ($jql)"
+  fi
+
+  # Use JIRA CLI to list issues
+  # Output format: KEY | Summary | [Labels]
+  jira issue list --jql "$jql" --plain --columns key,summary,labels --no-headers 2>/dev/null | \
+    awk -F'\t' '{
+      key = $1
+      summary = $2
+      labels = $3
+
+      # Format similar to GitHub issue list
+      printf "%s | %s", key, summary
+      if (labels != "" && labels != "∅") {
+        # Split labels and format them
+        gsub(/,/, "][", labels)
+        printf " | [%s]", labels
+      }
+      printf "\n"
+    }'
+}
+
+_aw_jira_get_issue_details() {
+  # Get JIRA issue details
+  # Sets variables: title, body (description)
+  local jira_key="$1"
+
+  if [[ -z "$jira_key" ]]; then
+    return 1
+  fi
+
+  # Get issue details in JSON format
+  local issue_json=$(jira issue view "$jira_key" --plain --columns summary,description 2>/dev/null)
+
+  if [[ -z "$issue_json" ]]; then
+    return 1
+  fi
+
+  # Extract summary (title) and description (body)
+  # The plain format outputs tab-separated values
+  title=$(echo "$issue_json" | grep -A1 "Summary" | tail -1 | sed 's/^[[:space:]]*//')
+  body=$(echo "$issue_json" | grep -A1 "Description" | tail -1 | sed 's/^[[:space:]]*//')
+
+  # If description is empty or just "∅", set to empty string
+  if [[ "$body" == "∅" ]] || [[ "$body" == "" ]]; then
+    body=""
+  fi
+
+  return 0
 }
 
 _aw_has_unpushed_commits() {
@@ -884,36 +1153,53 @@ _aw_list() {
       commit_timestamp=$(find "$wt_path" -maxdepth 3 -type f -not -path '*/.git/*' -exec stat -f %m {} \; 2>/dev/null | sort -rn | head -1)
     fi
 
-    # Check if this worktree is linked to a merged issue or has a merged PR
-    local issue_num=$(_aw_extract_issue_number "$wt_branch")
+    # Check if this worktree is linked to a merged/resolved issue or has a merged PR
+    # Try to detect both GitHub issues and JIRA keys
+    local issue_id=$(_aw_extract_issue_id "$wt_branch")
     local is_merged=false
     local merged_indicator=""
     local merge_reason=""
 
-    if [[ -n "$issue_num" ]] && _aw_check_issue_merged "$issue_num"; then
-      is_merged=true
-      merge_reason="issue #$issue_num"
-      merged_indicator=" $(gum style --foreground 5 "[merged #$issue_num]")"
-    elif _aw_check_branch_pr_merged "$wt_branch"; then
+    # _AW_DETECTED_ISSUE_TYPE is set by _aw_extract_issue_id
+    if [[ -n "$issue_id" ]]; then
+      if [[ "$_AW_DETECTED_ISSUE_TYPE" == "jira" ]]; then
+        # Check if JIRA issue is resolved
+        if _aw_jira_check_resolved "$issue_id"; then
+          is_merged=true
+          merge_reason="JIRA $issue_id"
+          merged_indicator=" $(gum style --foreground 5 "[resolved $issue_id]")"
+        fi
+      elif [[ "$_AW_DETECTED_ISSUE_TYPE" == "github" ]]; then
+        # Check if GitHub issue is merged
+        if _aw_check_issue_merged "$issue_id"; then
+          is_merged=true
+          merge_reason="issue #$issue_id"
+          merged_indicator=" $(gum style --foreground 5 "[merged #$issue_id]")"
+        elif _aw_check_issue_closed "$issue_id"; then
+          # Issue is closed but no PR (either open or merged)
+          if [[ "$_AW_ISSUE_HAS_PR" == "false" ]]; then
+            # Check for unpushed commits
+            if _aw_has_unpushed_commits "$wt_path"; then
+              # Has unpushed work - mark as closed but with warning
+              is_merged=true
+              merge_reason="issue #$issue_id closed (⚠ $_AW_UNPUSHED_COUNT unpushed)"
+              merged_indicator=" $(gum style --foreground 3 "[closed #$issue_id ⚠]")"
+            else
+              # No unpushed work - safe to clean up
+              is_merged=true
+              merge_reason="issue #$issue_id closed"
+              merged_indicator=" $(gum style --foreground 5 "[closed #$issue_id]")"
+            fi
+          fi
+        fi
+      fi
+    fi
+
+    # Also check for merged PRs if no issue was detected
+    if [[ "$is_merged" == "false" ]] && _aw_check_branch_pr_merged "$wt_branch"; then
       is_merged=true
       merge_reason="PR"
       merged_indicator=" $(gum style --foreground 5 "[PR merged]")"
-    elif [[ -n "$issue_num" ]] && _aw_check_issue_closed "$issue_num"; then
-      # Issue is closed but no PR (either open or merged)
-      if [[ "$_AW_ISSUE_HAS_PR" == "false" ]]; then
-        # Check for unpushed commits
-        if _aw_has_unpushed_commits "$wt_path"; then
-          # Has unpushed work - mark as closed but with warning
-          is_merged=true
-          merge_reason="issue #$issue_num closed (⚠ $_AW_UNPUSHED_COUNT unpushed)"
-          merged_indicator=" $(gum style --foreground 3 "[closed #$issue_num ⚠]")"
-        else
-          # No unpushed work - safe to clean up
-          is_merged=true
-          merge_reason="issue #$issue_num closed"
-          merged_indicator=" $(gum style --foreground 5 "[closed #$issue_num]")"
-        fi
-      fi
     fi
 
     if [[ "$is_merged" == "true" ]]; then
@@ -1074,16 +1360,60 @@ _aw_issue() {
   _aw_ensure_git_repo || return 1
   _aw_get_repo_info
 
-  local issue_num="${1:-}"
+  # Determine issue provider
+  local provider=$(_aw_get_issue_provider)
 
-  if [[ -z "$issue_num" ]]; then
+  # If not configured, prompt user to choose
+  if [[ -z "$provider" ]]; then
+    _aw_prompt_issue_provider || return 1
+    provider=$(_aw_get_issue_provider)
+  fi
+
+  # Check for provider-specific dependencies
+  _aw_check_issue_provider_deps "$provider" || return 1
+
+  # Detect if argument is GitHub issue number or JIRA key
+  local issue_id="${1:-}"
+  local issue_type=""
+
+  if [[ -n "$issue_id" ]]; then
+    # Auto-detect issue type from input
+    if [[ "$issue_id" =~ ^[A-Z][A-Z0-9]+-[0-9]+$ ]]; then
+      issue_type="jira"
+    elif [[ "$issue_id" =~ ^[0-9]+$ ]]; then
+      issue_type="github"
+    else
+      gum style --foreground 1 "Invalid issue format. Expected: GitHub number (e.g., 123) or JIRA key (e.g., PROJ-123)"
+      return 1
+    fi
+
+    # Validate issue type matches provider
+    if [[ "$issue_type" != "$provider" ]]; then
+      gum style --foreground 3 "Warning: This repository is configured for $provider, but you provided a $issue_type issue ID"
+      if ! gum confirm "Continue anyway?"; then
+        return 0
+      fi
+      provider="$issue_type"
+    fi
+  fi
+
+  if [[ -z "$issue_id" ]]; then
     gum spin --spinner dot --title "Fetching issues..." -- sleep 0.1
 
-    local issues=$(gh issue list --limit 100 --state open --json number,title,labels \
-      --template '{{range .}}#{{.number}} | {{.title}}{{if .labels}} |{{range .labels}} [{{.name}}]{{end}}{{end}}{{"\n"}}{{end}}' 2>/dev/null)
+    local issues=""
+    if [[ "$provider" == "jira" ]]; then
+      issues=$(_aw_jira_list_issues)
+    else
+      issues=$(gh issue list --limit 100 --state open --json number,title,labels \
+        --template '{{range .}}#{{.number}} | {{.title}}{{if .labels}} |{{range .labels}} [{{.name}}]{{end}}{{end}}{{"\n"}}{{end}}' 2>/dev/null)
+    fi
 
     if [[ -z "$issues" ]]; then
-      gum style --foreground 1 "No open issues found or not in a GitHub repository"
+      if [[ "$provider" == "jira" ]]; then
+        gum style --foreground 1 "No open JIRA issues found"
+      else
+        gum style --foreground 1 "No open GitHub issues found"
+      fi
       return 1
     fi
 
@@ -1095,7 +1425,11 @@ _aw_issue() {
         if [[ -d "$wt_path" ]]; then
           local wt_branch=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
           if [[ -n "$wt_branch" ]]; then
-            local wt_issue=$(_aw_extract_issue_number "$wt_branch")
+            if [[ "$provider" == "jira" ]]; then
+              local wt_issue=$(_aw_extract_jira_key "$wt_branch")
+            else
+              local wt_issue=$(_aw_extract_issue_number "$wt_branch")
+            fi
             if [[ -n "$wt_issue" ]]; then
               active_issues+=("$wt_issue")
             fi
@@ -1108,8 +1442,8 @@ _aw_issue() {
     local highlighted_issues=""
     while IFS= read -r issue_line; do
       if [[ -n "$issue_line" ]]; then
-        # Extract issue number from the line
-        local line_issue=$(echo "$issue_line" | sed 's/^#//' | cut -d'|' -f1 | tr -d ' ')
+        # Extract issue ID from the line
+        local line_issue=$(echo "$issue_line" | sed 's/^● *//' | sed 's/^#//' | cut -d'|' -f1 | tr -d ' ')
         # Check if this issue has an active worktree
         local is_active=false
         for active in "${active_issues[@]}"; do
@@ -1120,7 +1454,11 @@ _aw_issue() {
         done
         # Add indicator if active
         if [[ "$is_active" == "true" ]]; then
-          highlighted_issues+="$(echo "$issue_line" | sed 's/^#/● #/')"$'\n'
+          if [[ "$provider" == "jira" ]]; then
+            highlighted_issues+="● $issue_line"$'\n'
+          else
+            highlighted_issues+="$(echo "$issue_line" | sed 's/^#/● #/')"$'\n'
+          fi
         else
           highlighted_issues+="$issue_line"$'\n'
         fi
@@ -1134,17 +1472,26 @@ _aw_issue() {
       return 0
     fi
 
-    issue_num=$(echo "$selection" | sed 's/^● *//' | sed 's/^#//' | cut -d'|' -f1 | tr -d ' ')
+    issue_id=$(echo "$selection" | sed 's/^● *//' | sed 's/^#//' | cut -d'|' -f1 | tr -d ' ')
   fi
 
   # Fetch issue details including body
-  # Use --jq to extract fields directly, which handles control characters better
-  local title=$(gh issue view "$issue_num" --json title --jq '.title' 2>/dev/null)
-  local body=$(gh issue view "$issue_num" --json body --jq '.body // ""' 2>/dev/null)
+  local title=""
+  local body=""
 
-  if [[ -z "$title" ]]; then
-    gum style --foreground 1 "Could not fetch issue #$issue_num"
-    return 1
+  if [[ "$provider" == "jira" ]]; then
+    _aw_jira_get_issue_details "$issue_id" || {
+      gum style --foreground 1 "Could not fetch JIRA issue $issue_id"
+      return 1
+    }
+  else
+    title=$(gh issue view "$issue_id" --json title --jq '.title' 2>/dev/null)
+    body=$(gh issue view "$issue_id" --json body --jq '.body // ""' 2>/dev/null)
+
+    if [[ -z "$title" ]]; then
+      gum style --foreground 1 "Could not fetch GitHub issue #$issue_id"
+      return 1
+    fi
   fi
 
   # Check if a worktree already exists for this issue
@@ -1155,8 +1502,13 @@ _aw_issue() {
       if [[ -d "$wt_path" ]]; then
         local wt_branch=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
         if [[ -n "$wt_branch" ]]; then
-          local wt_issue=$(_aw_extract_issue_number "$wt_branch")
-          if [[ "$wt_issue" == "$issue_num" ]]; then
+          local wt_issue=""
+          if [[ "$provider" == "jira" ]]; then
+            wt_issue=$(_aw_extract_jira_key "$wt_branch")
+          else
+            wt_issue=$(_aw_extract_issue_number "$wt_branch")
+          fi
+          if [[ "$wt_issue" == "$issue_id" ]]; then
             existing_worktree="$wt_path"
             break
           fi
@@ -1168,15 +1520,23 @@ _aw_issue() {
   # If an active worktree exists for this issue, offer to resume it
   if [[ -n "$existing_worktree" ]]; then
     echo ""
-    gum style --foreground 3 "Active worktree found for issue #$issue_num:"
+    if [[ "$provider" == "jira" ]]; then
+      gum style --foreground 3 "Active worktree found for JIRA issue $issue_id:"
+    else
+      gum style --foreground 3 "Active worktree found for GitHub issue #$issue_id:"
+    fi
     echo "  $existing_worktree"
     echo ""
 
     if gum confirm "Resume existing worktree?"; then
       cd "$existing_worktree" || return 1
 
-      # Set terminal title for GitHub issue
-      printf '\033]0;GitHub Issue #%s - %s\007' "$issue_num" "$title"
+      # Set terminal title
+      if [[ "$provider" == "jira" ]]; then
+        printf '\033]0;JIRA %s - %s\007' "$issue_id" "$title"
+      else
+        printf '\033]0;GitHub Issue #%s - %s\007' "$issue_id" "$title"
+      fi
 
       _resolve_ai_command || return 1
 
@@ -1196,12 +1556,24 @@ _aw_issue() {
 
   # Generate suggested branch name
   local sanitized=$(_aw_sanitize_branch_name "$title" | cut -c1-40)
-  local suggested="work/${issue_num}-${sanitized}"
+  local suggested=""
+
+  if [[ "$provider" == "jira" ]]; then
+    suggested="work/${issue_id}-${sanitized}"
+  else
+    suggested="work/${issue_id}-${sanitized}"
+  fi
 
   echo ""
-  gum style --border rounded --padding "0 1" --border-foreground 5 -- \
-    "Issue #${issue_num}" \
-    "$title"
+  if [[ "$provider" == "jira" ]]; then
+    gum style --border rounded --padding "0 1" --border-foreground 5 -- \
+      "JIRA ${issue_id}" \
+      "$title"
+  else
+    gum style --border rounded --padding "0 1" --border-foreground 5 -- \
+      "Issue #${issue_id}" \
+      "$title"
+  fi
 
   echo ""
   local branch_name=$(gum input --value "$suggested" --placeholder "Branch name" --header "Confirm branch name:")
@@ -1211,19 +1583,34 @@ _aw_issue() {
     return 0
   fi
 
-  # Prepare context to pass to Claude
-  local claude_context="I'm working on GitHub issue #${issue_num}.
+  # Prepare context to pass to AI tool
+  local ai_context=""
+  if [[ "$provider" == "jira" ]]; then
+    ai_context="I'm working on JIRA issue ${issue_id}.
 
 Title: ${title}
 
 ${body}
 
 Ask clarifying questions about the intended work if you can think of any."
+  else
+    ai_context="I'm working on GitHub issue #${issue_id}.
 
-  # Set terminal title for GitHub issue
-  printf '\033]0;GitHub Issue #%s - %s\007' "$issue_num" "$title"
+Title: ${title}
 
-  _aw_create_worktree "$branch_name" "$claude_context"
+${body}
+
+Ask clarifying questions about the intended work if you can think of any."
+  fi
+
+  # Set terminal title
+  if [[ "$provider" == "jira" ]]; then
+    printf '\033]0;JIRA %s - %s\007' "$issue_id" "$title"
+  else
+    printf '\033]0;GitHub Issue #%s - %s\007' "$issue_id" "$title"
+  fi
+
+  _aw_create_worktree "$branch_name" "$ai_context"
 }
 
 # ============================================================================
@@ -1593,13 +1980,17 @@ auto-worktree() {
       echo "Usage: auto-worktree [command] [args]"
       echo ""
       echo "Commands:"
-      echo "  new           Create a new worktree"
-      echo "  resume        Resume an existing worktree"
-      echo "  issue [num]   Work on a GitHub issue"
-      echo "  pr [num]      Review a GitHub pull request"
-      echo "  list          List existing worktrees"
+      echo "  new             Create a new worktree"
+      echo "  resume          Resume an existing worktree"
+      echo "  issue [id]      Work on an issue (GitHub #123 or JIRA PROJ-123)"
+      echo "  pr [num]        Review a GitHub pull request"
+      echo "  list            List existing worktrees"
       echo ""
       echo "Run without arguments for interactive menu."
+      echo ""
+      echo "Configuration:"
+      echo "  First time using issues? Run 'auto-worktree issue' to configure"
+      echo "  your issue provider (GitHub or JIRA) for this repository."
       ;;
     "")    _aw_menu ;;
     *)
@@ -1619,7 +2010,7 @@ _auto_worktree() {
   commands=(
     'new:Create a new worktree'
     'resume:Resume an existing worktree'
-    'issue:Work on a GitHub issue'
+    'issue:Work on an issue (GitHub or JIRA)'
     'pr:Review a GitHub pull request'
     'list:List existing worktrees'
     'help:Show help message'
