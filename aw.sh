@@ -1112,6 +1112,82 @@ _aw_check_branch_pr_merged() {
   return 1
 }
 
+_aw_get_default_branch() {
+  # Detect the default branch (main or master)
+  # Returns the branch name or empty string if not found
+
+  # First try to get from remote
+  local default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+
+  if [[ -n "$default_branch" ]]; then
+    echo "$default_branch"
+    return 0
+  fi
+
+  # Fallback: check if main or master exists locally
+  if git show-ref --verify --quiet refs/heads/main 2>/dev/null; then
+    echo "main"
+    return 0
+  elif git show-ref --verify --quiet refs/heads/master 2>/dev/null; then
+    echo "master"
+    return 0
+  fi
+
+  # Last resort: try to get from remote branches
+  if git show-ref --verify --quiet refs/remotes/origin/main 2>/dev/null; then
+    echo "main"
+    return 0
+  elif git show-ref --verify --quiet refs/remotes/origin/master 2>/dev/null; then
+    echo "master"
+    return 0
+  fi
+
+  return 1
+}
+
+_aw_check_no_changes_from_default() {
+  # Check if a worktree has no changes from the default branch HEAD
+  # Returns 0 if no changes, 1 otherwise
+  # Sets _AW_DEFAULT_BRANCH_NAME global variable
+  local wt_path="$1"
+
+  if [[ -z "$wt_path" ]] || [[ ! -d "$wt_path" ]]; then
+    return 1
+  fi
+
+  # Get default branch name
+  _AW_DEFAULT_BRANCH_NAME=$(_aw_get_default_branch)
+
+  if [[ -z "$_AW_DEFAULT_BRANCH_NAME" ]]; then
+    return 1
+  fi
+
+  # Get the current branch of the worktree
+  local wt_branch=$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null)
+
+  # Don't check if this IS the default branch
+  if [[ "$wt_branch" == "$_AW_DEFAULT_BRANCH_NAME" ]]; then
+    return 1
+  fi
+
+  # Get the commit hash of the worktree HEAD
+  local wt_head=$(git -C "$wt_path" rev-parse HEAD 2>/dev/null)
+
+  # Get the commit hash of the default branch HEAD
+  local default_head=$(git rev-parse "$_AW_DEFAULT_BRANCH_NAME" 2>/dev/null)
+
+  if [[ -z "$wt_head" ]] || [[ -z "$default_head" ]]; then
+    return 1
+  fi
+
+  # Check if they're the same
+  if [[ "$wt_head" == "$default_head" ]]; then
+    return 0
+  fi
+
+  return 1
+}
+
 # ============================================================================
 # JIRA integration functions
 # ============================================================================
@@ -1642,6 +1718,13 @@ _aw_list() {
         merge_reason="PR"
         merged_indicator=" $(gum style --foreground 5 "[PR merged]")"
       fi
+    fi
+
+    # Check for worktrees with no changes from default branch (only if not already flagged as merged/closed)
+    if [[ "$is_merged" == "false" ]] && ! _aw_has_unpushed_commits "$wt_path" && _aw_check_no_changes_from_default "$wt_path"; then
+      is_merged=true
+      merge_reason="no changes from $_AW_DEFAULT_BRANCH_NAME"
+      merged_indicator=" $(gum style --foreground 8 "[no changes]")"
     fi
 
     if [[ "$is_merged" == "true" ]]; then
@@ -2610,6 +2693,8 @@ _aw_cleanup_interactive() {
           status_tag="[closed #$issue_num]"
         fi
       fi
+    elif ! _aw_has_unpushed_commits "$wt_path" && _aw_check_no_changes_from_default "$wt_path"; then
+      status_tag="[no changes]"
     fi
 
     # Build age string
