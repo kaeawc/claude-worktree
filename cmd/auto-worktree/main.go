@@ -104,12 +104,14 @@ func cmdList() {
 	for _, wt := range worktrees {
 		path := wt.Path
 		branch := wt.Branch
+
 		if branch == "" {
 			branch = fmt.Sprintf("(detached @ %s)", wt.HEAD[:7])
 		}
 
 		age := formatAge(wt.Age())
 		unpushed := ""
+
 		if wt.UnpushedCount > 0 {
 			unpushed = fmt.Sprintf("%d commits", wt.UnpushedCount)
 		} else if !wt.IsDetached {
@@ -162,6 +164,7 @@ func cmdNew() {
 		fmt.Fprintf(os.Stderr, "Error checking for existing worktree: %v\n", err)
 		os.Exit(1)
 	}
+
 	if existingWt != nil {
 		fmt.Fprintf(os.Stderr, "Error: worktree already exists for branch %s at %s\n", branchName, existingWt.Path)
 		os.Exit(1)
@@ -187,9 +190,9 @@ func cmdNew() {
 		}
 
 		// Get default branch as base
-		defaultBranch, err := repo.GetDefaultBranch()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting default branch: %v\n", err)
+		defaultBranch, errDefault := repo.GetDefaultBranch()
+		if errDefault != nil {
+			fmt.Fprintf(os.Stderr, "Error getting default branch: %v\n", errDefault)
 			os.Exit(1)
 		}
 
@@ -273,11 +276,12 @@ func formatAge(d time.Duration) string {
 	hours := int(d.Hours()) % 24
 	minutes := int(d.Minutes()) % 60
 
-	if days > 0 {
+	switch {
+	case days > 0:
 		return fmt.Sprintf("%dd %dh", days, hours)
-	} else if hours > 0 {
+	case hours > 0:
 		return fmt.Sprintf("%dh %dm", hours, minutes)
-	} else {
+	default:
 		return fmt.Sprintf("%dm", minutes)
 	}
 }
