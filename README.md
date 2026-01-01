@@ -251,6 +251,64 @@ auto-worktree issue <TAB>  # Shows open issues from GitHub
 auto-worktree pr <TAB>     # Shows open PRs from GitHub
 ```
 
+## Development
+
+### Code Quality and Validation
+
+This project uses [ShellCheck](https://www.shellcheck.net/) to validate shell scripts and catch common bugs, portability issues, and code quality problems.
+
+#### Running ShellCheck Locally
+
+To validate all shell scripts in the repository:
+
+```bash
+scripts/shellcheck/validate_shell_scripts.sh
+```
+
+This will check all `.sh` files and report any issues found.
+
+#### Pre-commit Hook (Optional)
+
+Install the pre-commit hook to automatically validate shell scripts before each commit:
+
+```bash
+scripts/shellcheck/install_pre_commit_hook.sh
+```
+
+The hook will run ShellCheck on staged `.sh` files and prevent commits if issues are found. To bypass the hook for a single commit (not recommended):
+
+```bash
+git commit --no-verify
+```
+
+To uninstall the hook:
+
+```bash
+rm .git/hooks/pre-commit
+```
+
+#### CI/CD Validation
+
+ShellCheck validation runs automatically on all pull requests via GitHub Actions. PRs must pass validation before they can be merged.
+
+#### ShellCheck Configuration
+
+The `.shellcheckrc` file configures which checks are enabled. Currently, many warnings are disabled to allow gradual improvement. As issues are fixed, warnings will be progressively enabled.
+
+#### Installing ShellCheck
+
+**macOS:**
+```bash
+brew install shellcheck
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get install shellcheck
+```
+
+**Other platforms:** See [ShellCheck installation instructions](https://github.com/koalaman/shellcheck#installing)
+
 ## Why Worktrees?
 
 - **No context switching**: Keep multiple tasks in progress without stashing

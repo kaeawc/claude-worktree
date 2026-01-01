@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+#
+# Pre-commit hook for shellcheck validation
+# This hook runs shellcheck on all staged .sh files before allowing a commit
+#
+# To install this hook, run from the repository root:
+#   ln -s ../../scripts/shellcheck/pre-commit .git/hooks/pre-commit
+#
+# To bypass this hook for a single commit (not recommended):
+#   git commit --no-verify
+#
+
+# Check if shellcheck is installed
+if ! command -v shellcheck &>/dev/null; then
+  echo "Warning: shellcheck is not installed, skipping validation" >&2
+  echo "To install: brew install shellcheck (macOS) or use your package manager" >&2
+  exit 0
+fi
+
+# Get the repository root
+repo_root=$(git rev-parse --show-toplevel)
+
+# Get list of staged .sh files
+staged_files=$(git diff --cached --name-only --diff-filter=ACM | grep '\.sh$' || true)
+
+if [[ -z "$staged_files" ]]; then
+  # No shell scripts staged, skip validation
+  exit 0
+fi
+
+echo "Running shellcheck on staged shell scripts..."
+
+# Run shellcheck on each staged file
+failed=0
+while IFS= read -r file; do
+  if [[ -f "$repo_root/$file" ]]; then
+    if ! shellcheck "$repo_root/$file"; then
+      failed=1
+    fi
+  fi
+done <<< "$staged_files"
+
+if [[ $failed -eq 1 ]]; then
+  echo "" >&2
+  echo "ShellCheck validation failed!" >&2
+  echo "Please fix the issues above or use 'git commit --no-verify' to bypass (not recommended)" >&2
+  exit 1
+fi
+
+echo "ShellCheck validation passed!"
+exit 0

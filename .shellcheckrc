@@ -1,0 +1,103 @@
+# ShellCheck configuration for auto-worktree
+# https://www.shellcheck.net/wiki/Directive
+
+# This configuration initially suppresses warnings to allow gradual improvement.
+# As we fix issues, we'll remove items from this list to enable more checks.
+
+# Shell to assume (bash is the default, but we use both bash and zsh)
+shell=bash
+
+# Minimum severity to report (error, warning, info, style)
+# Starting with 'error' level only - warnings will be enabled incrementally
+# Future: Change to 'warning' once critical issues are fixed, then 'style' eventually
+severity=error
+
+# ==============================================================================
+# DISABLED WARNINGS - To be enabled incrementally as issues are fixed
+# ==============================================================================
+
+# SC2155: Declare and assign separately to avoid masking return values
+# Status: 167 instances - Priority 1 (masks bugs like issue #50)
+# Action: Fix in separate PR after validation infrastructure is in place
+disable=SC2155
+
+# SC2181: Check exit code directly with e.g. 'if mycmd;', not indirectly with $?
+# Status: 20 instances - Priority 2 (less robust error checking)
+# Action: Fix in separate PR
+disable=SC2181
+
+# SC2086: Double quote to prevent globbing and word splitting
+# Status: 4 instances - Priority 3 (potential word splitting bugs)
+# Action: Fix in separate PR
+disable=SC2086
+
+# SC2034: Variable appears unused. Verify use (or export if used externally)
+# Status: 5 instances - May be intentional for clarity or future use
+# Action: Review each instance
+disable=SC2034
+
+# SC2206: Quote to prevent word splitting/globbing, or split robustly with mapfile or read -a
+# Status: 3 instances - Array construction issues
+# Action: Fix in separate PR
+disable=SC2206
+
+# SC2296: Parameter expansion can't be nested. Use temporary variables.
+# Status: 3 instances - Complex parameter expansion
+# Action: Review and refactor
+disable=SC2296
+
+# SC2004: $/${} is unnecessary on arithmetic variables
+# Status: 3 instances - Style issue
+# Action: Fix in separate PR (low priority)
+disable=SC2004
+
+# SC2001: See if you can use ${variable//search/replace} instead
+# Status: 3 instances - Style/performance issue
+# Action: Fix in separate PR (low priority)
+disable=SC2001
+
+# SC1087: Use braces when expanding arrays, e.g. ${array[idx]} (or ${var}[.. to quiet)
+# Status: 2 instances - Array expansion syntax
+# Action: Fix in separate PR
+disable=SC1087
+
+# SC2154: Variable is referenced but not assigned
+# Status: 1 instance - May be sourced from environment or parent script
+# Action: Review instance
+disable=SC2154
+
+# SC2046: Quote this to prevent word splitting
+# Status: 1 instance - Command substitution without quotes
+# Action: Fix in separate PR
+disable=SC2046
+
+# SC1010: Use semicolon or linefeed before done/then (keyword in word lists)
+# Status: Multiple instances in word lists (done, then used as random words)
+# Action: Quote the word lists or escape these keywords
+disable=SC1010
+
+# SC1083: Literal braces in git ref syntax
+# Status: Multiple instances in git commands using @{u} syntax
+# Action: These are valid git ref syntax, can be quoted or left as-is
+disable=SC1083
+
+# SC2016: Expressions don't expand in single quotes
+# Status: Few instances - mostly intentional use of single quotes
+# Action: Review each instance, some may need double quotes
+disable=SC2016
+
+# SC1091: Not following sourced files
+# Status: Few instances - shellcheck can't follow sourced files
+# Action: Add shellcheck directives or use -x flag for cross-file analysis
+disable=SC1091
+
+# ==============================================================================
+# NOTES
+# ==============================================================================
+#
+# To re-enable a check after fixing issues:
+# 1. Remove or comment out the corresponding disable= line
+# 2. Test with: scripts/shellcheck/validate_shell_scripts.sh
+# 3. Fix any new issues that appear
+# 4. Commit the fixes and updated .shellcheckrc
+#
