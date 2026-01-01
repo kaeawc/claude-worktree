@@ -4843,3 +4843,40 @@ _auto_worktree() {
 }
 
 compdef _auto_worktree auto-worktree
+
+# ============================================================================
+# Worktree-aware 'aw' wrapper
+# ============================================================================
+#
+# This function provides a convenient 'aw' alias that is worktree-aware:
+# - When in a git repository with a local aw.sh file, it sources that version
+#   (useful when developing auto-worktree itself - your changes take effect immediately)
+# - Otherwise, it uses the globally-sourced auto-worktree function
+# - Provides a shorter command: 'aw' instead of 'auto-worktree'
+#
+aw() {
+  # Check if we're in a git repository
+  local git_root
+  git_root=$(git rev-parse --show-toplevel 2>/dev/null)
+
+  # If we're in a git repo and there's a local aw.sh, source it
+  # This allows developers working on auto-worktree to use their local changes
+  if [[ -n "$git_root" && -f "$git_root/aw.sh" ]]; then
+    # Only source if it's different from the currently loaded version
+    local local_aw_path="$git_root/aw.sh"
+    local current_aw_path="${_AW_SOURCE_PATH:-}"
+
+    if [[ "$local_aw_path" != "$current_aw_path" ]]; then
+      # shellcheck disable=SC1090
+      source "$local_aw_path"
+      # Track which version we sourced for future comparisons
+      export _AW_SOURCE_PATH="$local_aw_path"
+    fi
+  fi
+
+  # Call auto-worktree with all provided arguments
+  auto-worktree "$@"
+}
+
+# Also set up completion for the 'aw' alias
+compdef _auto_worktree aw
