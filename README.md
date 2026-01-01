@@ -74,9 +74,10 @@ source /path/to/auto-worktree/aw.sh
 ```bash
 auto-worktree                  # Interactive menu
 auto-worktree new              # Create new worktree
-auto-worktree issue [id]       # Work on an issue (GitHub #123, JIRA PROJ-123, or Linear TEAM-123)
-auto-worktree pr [num]         # Review a GitHub PR
+auto-worktree issue [id]       # Work on an issue (GitHub #123, GitLab #456, JIRA PROJ-123, or Linear TEAM-123)
+auto-worktree pr [num]         # Review a GitHub PR or GitLab MR
 auto-worktree list             # List existing worktrees
+auto-worktree settings         # Configure per-repo settings
 auto-worktree help             # Show help
 ```
 
@@ -146,7 +147,9 @@ Shows all worktrees with:
 
 ## Configuration
 
-Issue provider settings are stored per-repository using git config:
+Issue provider settings are stored per-repository using git config. Use the
+interactive Settings menu (or `auto-worktree settings`) to view and update
+project-specific preferences.
 
 ```bash
 # View current configuration
@@ -165,6 +168,11 @@ git config auto-worktree.gitlab-project group/project  # Optional: default proje
 # Manual configuration for Linear
 git config auto-worktree.issue-provider linear
 git config auto-worktree.linear-team TEAM       # Optional: default team filter
+
+# Manual configuration for AI and auto-select
+git config auto-worktree.ai-tool claude         # claude, codex, gemini, jules, skip
+git config auto-worktree.issue-autoselect true  # true/false
+git config auto-worktree.pr-autoselect true     # true/false
 ```
 
 Different repositories can use different issue providers.
@@ -238,7 +246,7 @@ auto-worktree list
 The tool includes full zsh completion:
 
 ```bash
-auto-worktree <TAB>        # Shows: new, issue, pr, list, help
+auto-worktree <TAB>        # Shows: new, issue, pr, list, settings, help
 auto-worktree issue <TAB>  # Shows open issues from GitHub
 auto-worktree pr <TAB>     # Shows open PRs from GitHub
 ```

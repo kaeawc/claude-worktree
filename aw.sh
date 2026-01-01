@@ -9,6 +9,7 @@
 #   auto-worktree issue [id]         # Work on an issue (GitHub #123, GitLab #456, or JIRA PROJ-123)
 #   auto-worktree pr [num]           # Review a GitHub PR or GitLab MR
 #   auto-worktree list               # List existing worktrees
+#   auto-worktree settings           # Configure per-repository settings
 #
 # Configuration (per-repository via git config):
 #   git config auto-worktree.issue-provider github|gitlab|jira  # Set issue provider
@@ -16,6 +17,10 @@
 #   git config auto-worktree.jira-project <KEY>                 # Set default JIRA project
 #   git config auto-worktree.gitlab-server <URL>                # Set GitLab server URL (for self-hosted)
 #   git config auto-worktree.gitlab-project <GROUP/PROJECT>     # Set default GitLab project path
+#   git config auto-worktree.linear-team <TEAM>                 # Set default Linear team
+#   git config auto-worktree.ai-tool <name>                     # claude|codex|gemini|jules|skip
+#   git config auto-worktree.issue-autoselect <bool>            # true/false for AI auto-select
+#   git config auto-worktree.pr-autoselect <bool>               # true/false for AI auto-select
 
 # ============================================================================
 # Dependencies check
@@ -116,60 +121,69 @@ AI_CMD=()
 AI_CMD_NAME=""
 AI_RESUME_CMD=()
 
-# Config directory for storing preferences
-_AW_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/auto-worktree"
-_AW_PREF_FILE="$_AW_CONFIG_DIR/ai_tool_preference"
-
-# Load saved AI tool preference
+# Load saved AI tool preference (per-repository git config)
 _load_ai_preference() {
-  if [[ -f "$_AW_PREF_FILE" ]]; then
-    cat "$_AW_PREF_FILE"
+  git config --get auto-worktree.ai-tool 2>/dev/null || echo ""
+}
+
+# Save AI tool preference (per-repository git config)
+_save_ai_preference() {
+  local tool="$1"
+  if [[ -z "$tool" ]]; then
+    git config --unset auto-worktree.ai-tool 2>/dev/null
+  else
+    git config auto-worktree.ai-tool "$tool"
   fi
 }
 
-# Save AI tool preference
-_save_ai_preference() {
-  local tool="$1"
-  mkdir -p "$_AW_CONFIG_DIR"
-  echo "$tool" > "$_AW_PREF_FILE"
+_aw_get_issue_autoselect() {
+  local value
+  value=$(git config --get --bool auto-worktree.issue-autoselect 2>/dev/null || echo "")
+  if [[ -z "$value" ]]; then
+    echo "true"
+  else
+    echo "$value"
+  fi
 }
 
-# Auto-select preference file
-_AW_AUTOSELECT_PREF="$_AW_CONFIG_DIR/issue_autoselect_disabled"
+_aw_get_pr_autoselect() {
+  local value
+  value=$(git config --get --bool auto-worktree.pr-autoselect 2>/dev/null || echo "")
+  if [[ -z "$value" ]]; then
+    echo "true"
+  else
+    echo "$value"
+  fi
+}
 
 # Check if auto-select is disabled
 _is_autoselect_disabled() {
-  [[ -f "$_AW_AUTOSELECT_PREF" ]]
+  [[ "$(_aw_get_issue_autoselect)" == "false" ]]
 }
 
 # Disable auto-select
 _disable_autoselect() {
-  mkdir -p "$_AW_CONFIG_DIR"
-  touch "$_AW_AUTOSELECT_PREF"
+  git config auto-worktree.issue-autoselect false
 }
 
 # Enable auto-select
 _enable_autoselect() {
-  rm -f "$_AW_AUTOSELECT_PREF"
+  git config auto-worktree.issue-autoselect true
 }
-
-# PR Auto-select preference file (separate from issue auto-select)
-_AW_PR_AUTOSELECT_PREF="$_AW_CONFIG_DIR/pr_autoselect_disabled"
 
 # Check if PR auto-select is disabled
 _is_pr_autoselect_disabled() {
-  [[ -f "$_AW_PR_AUTOSELECT_PREF" ]]
+  [[ "$(_aw_get_pr_autoselect)" == "false" ]]
 }
 
 # Disable PR auto-select
 _disable_pr_autoselect() {
-  mkdir -p "$_AW_CONFIG_DIR"
-  touch "$_AW_PR_AUTOSELECT_PREF"
+  git config auto-worktree.pr-autoselect false
 }
 
 # Enable PR auto-select
 _enable_pr_autoselect() {
-  rm -f "$_AW_PR_AUTOSELECT_PREF"
+  git config auto-worktree.pr-autoselect true
 }
 
 # AI-powered issue selection - filters to top 5 issues in priority order
@@ -773,8 +787,8 @@ _aw_get_file_mtime() {
 # ============================================================================
 
 _aw_get_issue_provider() {
-  # Get the configured issue provider (github or jira)
-  # Returns: github, jira, or empty string if not configured
+  # Get the configured issue provider
+  # Returns: github, gitlab, jira, linear, or empty string if not configured
   git config --get auto-worktree.issue-provider 2>/dev/null || echo ""
 }
 
@@ -945,6 +959,308 @@ _aw_configure_linear() {
   echo "  1. Create an API key at https://linear.app/settings/account/security"
   echo "  2. Set environment variable: export LINEAR_API_KEY=your_key_here"
   echo ""
+}
+
+_aw_issue_provider_label() {
+  local provider="$1"
+  case "$provider" in
+    github) echo "GitHub Issues" ;;
+    gitlab) echo "GitLab Issues" ;;
+    jira) echo "JIRA" ;;
+    linear) echo "Linear Issues" ;;
+    *) echo "not set" ;;
+  esac
+}
+
+_aw_ai_preference_label() {
+  local pref="$1"
+  case "$pref" in
+    claude) echo "Claude Code" ;;
+    codex) echo "Codex CLI" ;;
+    gemini) echo "Gemini CLI" ;;
+    jules) echo "Google Jules CLI" ;;
+    skip) echo "skip AI tool" ;;
+    *) echo "auto (prompt when needed)" ;;
+  esac
+}
+
+_aw_bool_label() {
+  local value="$1"
+  if [[ "$value" == "true" ]]; then
+    echo "enabled"
+  else
+    echo "disabled"
+  fi
+}
+
+_aw_clear_issue_provider_settings() {
+  git config --unset auto-worktree.issue-provider 2>/dev/null
+  git config --unset auto-worktree.jira-server 2>/dev/null
+  git config --unset auto-worktree.jira-project 2>/dev/null
+  git config --unset auto-worktree.gitlab-server 2>/dev/null
+  git config --unset auto-worktree.gitlab-project 2>/dev/null
+  git config --unset auto-worktree.linear-team 2>/dev/null
+  gum style --foreground 2 "✓ Issue provider settings cleared"
+}
+
+_aw_show_settings_summary() {
+  local provider=$(_aw_get_issue_provider)
+  local provider_label=$(_aw_issue_provider_label "$provider")
+  local jira_server=$(_aw_get_jira_server)
+  local jira_project=$(_aw_get_jira_project)
+  local gitlab_server=$(_aw_get_gitlab_server)
+  local gitlab_project=$(_aw_get_gitlab_project)
+  local linear_team=$(_aw_get_linear_team)
+  local ai_pref=$(_load_ai_preference)
+  local ai_label=$(_aw_ai_preference_label "$ai_pref")
+  local issue_autoselect=$(_aw_get_issue_autoselect)
+  local pr_autoselect=$(_aw_get_pr_autoselect)
+
+  gum style --border rounded --padding "0 1" --border-foreground 4 \
+    "Settings Summary" \
+    "Issue provider: $provider_label" \
+    "JIRA server: ${jira_server:-(unset)}" \
+    "JIRA project: ${jira_project:-(unset)}" \
+    "GitLab server: ${gitlab_server:-(unset)}" \
+    "GitLab project: ${gitlab_project:-(unset)}" \
+    "Linear team: ${linear_team:-(unset)}" \
+    "AI tool preference: $ai_label" \
+    "Issue auto-select: $(_aw_bool_label "$issue_autoselect")" \
+    "PR auto-select: $(_aw_bool_label "$pr_autoselect")"
+}
+
+_aw_show_settings_warnings() {
+  local provider=$(_aw_get_issue_provider)
+  local warnings=()
+
+  if [[ -z "$provider" ]]; then
+    warnings+=("Issue provider not configured for this repository.")
+  fi
+
+  if [[ -d ".github/ISSUE_TEMPLATE" ]] || [[ -f ".github/ISSUE_TEMPLATE.md" ]]; then
+    if [[ "$provider" != "github" ]]; then
+      warnings+=("GitHub issue templates detected, but issue provider is not set to GitHub.")
+    fi
+  fi
+
+  if [[ -n "$provider" ]]; then
+    case "$provider" in
+      github)
+        if ! command -v gh &> /dev/null; then
+          warnings+=("GitHub CLI (gh) not found. GitHub issue workflow will fail.")
+        fi
+        ;;
+      gitlab)
+        if ! command -v glab &> /dev/null; then
+          warnings+=("GitLab CLI (glab) not found. GitLab issue workflow will fail.")
+        fi
+        ;;
+      jira)
+        if ! command -v jira &> /dev/null; then
+          warnings+=("JIRA CLI (jira) not found. JIRA issue workflow will fail.")
+        fi
+        ;;
+      linear)
+        if ! command -v linear &> /dev/null; then
+          warnings+=("Linear CLI (linear) not found. Linear issue workflow will fail.")
+        fi
+        ;;
+    esac
+  fi
+
+  local ai_pref=$(_load_ai_preference)
+  if [[ -n "$ai_pref" ]] && [[ "$ai_pref" != "skip" ]]; then
+    case "$ai_pref" in
+      claude)
+        command -v claude &> /dev/null || warnings+=("AI preference set to Claude Code, but it is not installed.")
+        ;;
+      codex)
+        command -v codex &> /dev/null || warnings+=("AI preference set to Codex CLI, but it is not installed.")
+        ;;
+      gemini)
+        command -v gemini &> /dev/null || warnings+=("AI preference set to Gemini CLI, but it is not installed.")
+        ;;
+      jules)
+        command -v jules &> /dev/null || warnings+=("AI preference set to Google Jules CLI, but it is not installed.")
+        ;;
+    esac
+  fi
+
+  if [[ ${#warnings[@]} -gt 0 ]]; then
+    echo ""
+    gum style --border rounded --padding "0 1" --border-foreground 3 \
+      "Warnings / Suggestions" \
+      "${warnings[@]}"
+  fi
+}
+
+_aw_settings_issue_provider() {
+  while true; do
+    echo ""
+    _aw_show_settings_summary
+
+    local choice=$(gum choose \
+      "Set issue provider" \
+      "Configure JIRA" \
+      "Configure GitLab" \
+      "Configure Linear" \
+      "Clear issue provider settings" \
+      "Back")
+
+    case "$choice" in
+      "Set issue provider")
+        local provider_choice=$(gum choose --header "Select issue provider" \
+          "GitHub Issues" \
+          "GitLab Issues" \
+          "JIRA" \
+          "Linear Issues" \
+          "Unset" \
+          "Back")
+
+        case "$provider_choice" in
+          "GitHub Issues") _aw_set_issue_provider "github" ;;
+          "GitLab Issues") _aw_set_issue_provider "gitlab" ;;
+          "JIRA") _aw_set_issue_provider "jira" ;;
+          "Linear Issues") _aw_set_issue_provider "linear" ;;
+          "Unset")
+            git config --unset auto-worktree.issue-provider 2>/dev/null
+            gum style --foreground 2 "✓ Issue provider unset"
+            ;;
+          *) ;;
+        esac
+        ;;
+      "Configure JIRA") _aw_configure_jira ;;
+      "Configure GitLab") _aw_configure_gitlab ;;
+      "Configure Linear") _aw_configure_linear ;;
+      "Clear issue provider settings") _aw_clear_issue_provider_settings ;;
+      *) return 0 ;;
+    esac
+  done
+}
+
+_aw_settings_ai_tool() {
+  while true; do
+    local current_pref=$(_load_ai_preference)
+    local current_label=$(_aw_ai_preference_label "$current_pref")
+
+    local choice=$(gum choose --header "AI tool preference (current: $current_label)" \
+      "Auto (prompt when needed)" \
+      "Claude Code" \
+      "Codex CLI" \
+      "Gemini CLI" \
+      "Google Jules CLI" \
+      "Skip AI tool" \
+      "Back")
+
+    case "$choice" in
+      "Auto (prompt when needed)")
+        _save_ai_preference ""
+        gum style --foreground 2 "✓ AI tool preference reset to auto"
+        ;;
+      "Claude Code")
+        _save_ai_preference "claude"
+        gum style --foreground 2 "✓ AI tool preference set to Claude Code"
+        ;;
+      "Codex CLI")
+        _save_ai_preference "codex"
+        gum style --foreground 2 "✓ AI tool preference set to Codex CLI"
+        ;;
+      "Gemini CLI")
+        _save_ai_preference "gemini"
+        gum style --foreground 2 "✓ AI tool preference set to Gemini CLI"
+        ;;
+      "Google Jules CLI")
+        _save_ai_preference "jules"
+        gum style --foreground 2 "✓ AI tool preference set to Google Jules CLI"
+        ;;
+      "Skip AI tool")
+        _save_ai_preference "skip"
+        gum style --foreground 2 "✓ AI tool preference set to skip"
+        ;;
+      *) return 0 ;;
+    esac
+  done
+}
+
+_aw_settings_autoselect() {
+  while true; do
+    local issue_autoselect=$(_aw_get_issue_autoselect)
+    local pr_autoselect=$(_aw_get_pr_autoselect)
+    local issue_label=$(_aw_bool_label "$issue_autoselect")
+    local pr_label=$(_aw_bool_label "$pr_autoselect")
+
+    local choice=$(gum choose --header "Auto-select settings (issues: $issue_label, PRs: $pr_label)" \
+      "Toggle issue auto-select" \
+      "Toggle PR auto-select" \
+      "Reset auto-select to defaults" \
+      "Back")
+
+    case "$choice" in
+      "Toggle issue auto-select")
+        if [[ "$issue_autoselect" == "true" ]]; then
+          _disable_autoselect
+          gum style --foreground 2 "✓ Issue auto-select disabled"
+        else
+          _enable_autoselect
+          gum style --foreground 2 "✓ Issue auto-select enabled"
+        fi
+        ;;
+      "Toggle PR auto-select")
+        if [[ "$pr_autoselect" == "true" ]]; then
+          _disable_pr_autoselect
+          gum style --foreground 2 "✓ PR auto-select disabled"
+        else
+          _enable_pr_autoselect
+          gum style --foreground 2 "✓ PR auto-select enabled"
+        fi
+        ;;
+      "Reset auto-select to defaults")
+        git config --unset auto-worktree.issue-autoselect 2>/dev/null
+        git config --unset auto-worktree.pr-autoselect 2>/dev/null
+        gum style --foreground 2 "✓ Auto-select settings reset to defaults"
+        ;;
+      *) return 0 ;;
+    esac
+  done
+}
+
+_aw_settings_reset() {
+  if ! gum confirm "Reset all auto-worktree settings for this repository?"; then
+    gum style --foreground 3 "Cancelled"
+    return 0
+  fi
+
+  _aw_clear_issue_provider_settings
+  git config --unset auto-worktree.ai-tool 2>/dev/null
+  git config --unset auto-worktree.issue-autoselect 2>/dev/null
+  git config --unset auto-worktree.pr-autoselect 2>/dev/null
+  gum style --foreground 2 "✓ All settings reset"
+}
+
+_aw_settings_menu() {
+  _aw_ensure_git_repo || return 1
+  _aw_get_repo_info
+
+  while true; do
+    echo ""
+    _aw_show_settings_summary
+    _aw_show_settings_warnings
+
+    local choice=$(gum choose \
+      "Issue provider settings" \
+      "AI tool preference" \
+      "Auto-select settings" \
+      "Reset settings" \
+      "Back")
+
+    case "$choice" in
+      "Issue provider settings") _aw_settings_issue_provider ;;
+      "AI tool preference") _aw_settings_ai_tool ;;
+      "Auto-select settings") _aw_settings_autoselect ;;
+      "Reset settings") _aw_settings_reset ;;
+      *) return 0 ;;
+    esac
+  done
 }
 
 _aw_prompt_issue_provider() {
@@ -3261,6 +3577,7 @@ _aw_menu() {
     "Work on issue" \
     "Review PR" \
     "Cleanup worktrees" \
+    "Settings" \
     "Cancel")
 
   case "$choice" in
@@ -3269,6 +3586,7 @@ _aw_menu() {
     "Work on issue")      _aw_issue ;;
     "Review PR")          _aw_pr ;;
     "Cleanup worktrees")  _aw_cleanup_interactive ;;
+    "Settings")           _aw_settings_menu ;;
     *)                    return 0 ;;
   esac
 }
@@ -3287,16 +3605,18 @@ auto-worktree() {
     resume)  shift; _aw_resume ;;
     list)    shift; _aw_list ;;
     cleanup) shift; _aw_cleanup_interactive ;;
+    settings) shift; _aw_settings_menu ;;
     help|--help|-h)
       echo "Usage: auto-worktree [command] [args]"
       echo ""
       echo "Commands:"
       echo "  new             Create a new worktree"
       echo "  resume          Resume an existing worktree"
-      echo "  issue [id]      Work on an issue (GitHub #123 or JIRA PROJ-123)"
-      echo "  pr [num]        Review a GitHub pull request"
+      echo "  issue [id]      Work on an issue (GitHub #123, GitLab #456, JIRA PROJ-123, or Linear TEAM-123)"
+      echo "  pr [num]        Review a GitHub PR or GitLab MR"
       echo "  list            List existing worktrees"
       echo "  cleanup         Interactively clean up worktrees"
+      echo "  settings        Configure per-repository settings"
       echo ""
       echo "Run without arguments for interactive menu."
       echo ""
@@ -3322,10 +3642,11 @@ _auto_worktree() {
   commands=(
     'new:Create a new worktree'
     'resume:Resume an existing worktree'
-    'issue:Work on an issue (GitHub or JIRA)'
-    'pr:Review a GitHub pull request'
+    'issue:Work on an issue (GitHub, GitLab, JIRA, or Linear)'
+    'pr:Review a GitHub PR or GitLab MR'
     'list:List existing worktrees'
     'cleanup:Interactively clean up worktrees'
+    'settings:Configure per-repository settings'
     'help:Show help message'
   )
 
