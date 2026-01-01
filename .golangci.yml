@@ -117,7 +117,7 @@ linters:
       min-occurrences: 3
 
     gosec:
-      exclude-ids:
+      excludes:
         - G204  # Audit use of command execution - we need this for git commands
 
     gocritic:
@@ -176,6 +176,22 @@ linters:
     paths:
       - vendor
       - .git
+    rules:
+      # Exclude some linters from running on tests files
+      - path: _test\.go
+        linters:
+          - gocyclo
+          - errcheck
+          - dupl
+          - gosec
+          - goconst
+          - wsl
+
+      # Exclude known linters from partially hard-vendored code
+      - path: internal/hmac/
+        text: "weak cryptographic primitive"
+        linters:
+          - gosec
 
 formatters:
   enable:
@@ -201,24 +217,3 @@ issues:
   uniq-by-line: true
   new: false
   fix: false
-
-  exclusions:
-    paths:
-      - vendor
-      - .git
-    rules:
-      # Exclude some linters from running on tests files
-      - path: _test\.go
-        linters:
-          - gocyclo
-          - errcheck
-          - dupl
-          - gosec
-          - goconst
-          - wsl
-
-      # Exclude known linters from partially hard-vendored code
-      - path: internal/hmac/
-        text: "weak cryptographic primitive"
-        linters:
-          - gosec
