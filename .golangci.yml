@@ -5,10 +5,6 @@ run:
   timeout: 5m
   tests: true
   build-tags: []
-  skip-dirs:
-    - vendor
-    - .git
-  skip-files: []
   modules-download-mode: readonly
 
 output:
@@ -16,7 +12,6 @@ output:
     - format: colored-line-number
   print-issued-lines: true
   print-linter-name: true
-  uniq-by-line: true
   sort-results: true
 
 linters:
@@ -45,7 +40,7 @@ linters:
     - gocognit      # Compute and check the cognitive complexity of functions
     - bodyclose     # Check whether HTTP response body is closed successfully
     - noctx         # Find sending http request without context.Context
-    - exportloopref # Check for pointers to enclosing loop variables
+    - copyloopvar   # Check for pointers to enclosing loop variables (replaces exportloopref)
     - prealloc      # Find slice declarations that could potentially be pre-allocated
     - predeclared   # Find code that shadows one of Go's predeclared identifiers
     - whitespace    # Detection of leading and trailing whitespace
@@ -68,7 +63,7 @@ linters:
     - gochecknoinits   # Check that no init functions exist
     - nestif        # Reports deeply nested if statements
     - maintidx      # Measures the maintainability index of each function
-    - gomnd         # Detects magic numbers
+    - mnd           # Detects magic numbers (replaces gomnd)
 
 linters-settings:
   errcheck:
@@ -155,6 +150,12 @@ linters-settings:
     force-case-trailing-whitespace: 0
 
 issues:
+  exclude-dirs:
+    - vendor
+    - .git
+
+  uniq-by-line: true
+
   exclude-rules:
     # Exclude some linters from running on tests files
     - path: _test\.go

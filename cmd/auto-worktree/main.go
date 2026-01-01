@@ -1,3 +1,4 @@
+// Package main provides the auto-worktree CLI tool for managing git worktrees.
 package main
 
 import (
@@ -8,6 +9,7 @@ import (
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "version" {
 		fmt.Println("auto-worktree version 0.1.0-dev")
+
 		return
 	}
 
