@@ -111,7 +111,8 @@ _aw_sanitize_branch_name() {
 
 ### Worktree Age Calculation
 - Uses commit timestamp from `git log -1 --format=%ct`
-- Falls back to file modification time if no commits
+- Falls back to file modification time if no commits (via `_aw_get_file_mtime` helper)
+- Cross-platform support: macOS/BSD (`stat -f %m`) and Linux (`stat -c %Y`)
 - Age thresholds:
   - `<1 day`: Green, shows hours (e.g., `[2h ago]`)
   - `1-4 days`: Yellow, shows days (e.g., `[3d ago]`)
