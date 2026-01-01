@@ -1537,15 +1537,19 @@ _aw_execute_hook() {
   local new_head=$(git -C "$worktree_path" rev-parse HEAD 2>/dev/null || echo "HEAD")
   local branch_flag="1"  # 1 = branch checkout, 0 = file checkout
 
-  # Set a safe PATH that includes standard system directories
-  # This ensures hooks have access to basic commands like basename, mkdir, date, etc.
-  local safe_path="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-  if [[ -n "$PATH" ]]; then
-    safe_path="$PATH:$safe_path"
-  fi
+  # Set up PATH for hook execution
+  # Git hooks run with minimal environment, so we need to ensure they have access to:
+  # 1. User's current PATH (includes user-installed tools like gum, homebrew packages, etc.)
+  # 2. Standard system directories (fallback for basic commands)
+  # 3. Common package manager directories (Homebrew on macOS, etc.)
+  local hook_path_env="$PATH"
+
+  # Add common directories if not already in PATH (for robustness)
+  local additional_paths="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+  hook_path_env="$hook_path_env:$additional_paths"
 
   # Run hook with output displayed directly to user
-  if (cd "$worktree_path" && PATH="$safe_path" "$hook_path" "$prev_head" "$new_head" "$branch_flag"); then
+  if (cd "$worktree_path" && PATH="$hook_path_env" "$hook_path" "$prev_head" "$new_head" "$branch_flag"); then
     gum style --foreground 2 "✓ Hook $hook_name completed successfully"
     return 0
   else
