@@ -4529,7 +4529,18 @@ _aw_resume() {
   _resolve_ai_command || return 1
 
   if [[ "${AI_CMD[1]}" != "skip" ]]; then
-    "${AI_RESUME_CMD[@]}"
+    # Check if a conversation exists to resume
+    # Claude Code stores conversation history in .claude directory
+    if [[ -d ".claude" ]] || [[ -f ".claude.json" ]]; then
+      # Conversation exists, try to resume
+      "${AI_RESUME_CMD[@]}"
+    else
+      # No conversation found, start a fresh session
+      gum style --foreground 3 "No conversation found to continue"
+      gum style --foreground 6 "Starting fresh session in worktree..."
+      echo ""
+      "${AI_CMD[@]}"
+    fi
   else
     gum style --foreground 3 "Skipping AI tool - worktree is ready for manual work"
   fi
