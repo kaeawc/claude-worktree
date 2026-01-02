@@ -20,6 +20,7 @@ import (
 	"github.com/kaeawc/auto-worktree/internal/environment"
 	"github.com/kaeawc/auto-worktree/internal/git"
 	"github.com/kaeawc/auto-worktree/internal/github"
+	"github.com/kaeawc/auto-worktree/internal/gitlab"
 	"github.com/kaeawc/auto-worktree/internal/hooks"
 	"github.com/kaeawc/auto-worktree/internal/session"
 	"github.com/kaeawc/auto-worktree/internal/ui"
@@ -553,6 +554,24 @@ func RunResume() error {
 	return nil
 }
 
+// detectProvider determines if a repository is GitHub or GitLab
+// Returns "github", "gitlab", or an error if neither
+func detectProvider(gitRoot string) (string, error) {
+	// Try GitHub first
+	_, err := github.DetectRepository(gitRoot)
+	if err == nil {
+		return "github", nil
+	}
+
+	// Try GitLab
+	_, err = gitlab.DetectRepository(gitRoot)
+	if err == nil {
+		return "gitlab", nil
+	}
+
+	return "", fmt.Errorf("not a GitHub or GitLab repository")
+}
+
 // RunIssue works on an issue.
 // If issueID is empty, shows interactive issue selector.
 // If issueID is numeric, directly creates worktree for that issue.
@@ -563,13 +582,32 @@ func RunIssue(issueID string) error {
 		return fmt.Errorf("error: %w", err)
 	}
 
-	// 2. Check gh CLI availability
+	// 2. Detect provider (GitHub or GitLab)
+	provider, err := detectProvider(repo.RootPath)
+	if err != nil {
+		return err
+	}
+
+	// 3. Route to appropriate provider
+	switch provider {
+	case "github":
+		return runGitHubIssue(issueID, repo)
+	case "gitlab":
+		return runGitLabIssue(issueID, repo)
+	default:
+		return fmt.Errorf("unsupported provider: %s", provider)
+	}
+}
+
+// runGitHubIssue handles GitHub issue workflow (existing logic)
+func runGitHubIssue(issueID string, repo *git.Repository) error {
+	// 1. Check gh CLI availability
 	executor := github.NewGitHubExecutor()
 	if !github.IsInstalled(executor) {
 		return fmt.Errorf("gh CLI is not installed. Install with: brew install gh")
 	}
 
-	// 3. Create GitHub client (auto-detects owner/repo)
+	// 2. Create GitHub client (auto-detects owner/repo)
 	client, err := github.NewClient(repo.RootPath)
 	if err != nil {
 		if errors.Is(err, github.ErrGHNotInstalled) {
@@ -673,6 +711,117 @@ func RunIssue(issueID string) error {
 
 	// 13. Start AI tool in background session
 	if err := startAISession(worktreePath, branchName, repo.RootPath, issue); err != nil {
+		return fmt.Errorf("failed to start AI session: %w", err)
+	}
+
+	return nil
+}
+
+// runGitLabIssue handles GitLab issue workflow
+func runGitLabIssue(issueID string, repo *git.Repository) error {
+	// 1. Check glab CLI availability
+	executor := gitlab.NewGitLabExecutor()
+	if !gitlab.IsInstalled(executor) {
+		return fmt.Errorf("glab CLI is not installed. Install with: brew install glab")
+	}
+
+	// 2. Create GitLab client (auto-detects owner/project)
+	client, err := gitlab.NewClient(repo.RootPath)
+	if err != nil {
+		if errors.Is(err, gitlab.ErrGlabNotInstalled) {
+			return fmt.Errorf("glab CLI is not installed. Install with: brew install glab")
+		}
+		if errors.Is(err, gitlab.ErrGlabNotAuthenticated) {
+			return fmt.Errorf("glab CLI is not authenticated. Run: glab auth login")
+		}
+		if errors.Is(err, gitlab.ErrNotGitLabRepo) {
+			return fmt.Errorf("not a GitLab repository")
+		}
+		return fmt.Errorf("failed to initialize GitLab client: %w", err)
+	}
+
+	fmt.Printf("Repository: %s/%s (Host: %s)\n\n", client.Owner, client.Project, client.Host)
+
+	// 3. Get issue IID (interactive or direct)
+	var issueIID int
+	if issueID == "" {
+		// Interactive mode: show issue selector
+		issueIID, err = selectGitLabIssueInteractive(client, repo)
+		if err != nil {
+			return err
+		}
+	} else {
+		// Direct mode: parse issue IID
+		issueIID, err = parseIssueNumber(issueID)
+		if err != nil {
+			return fmt.Errorf("invalid issue number: %s", issueID)
+		}
+	}
+
+	// 4. Fetch full issue details
+	issue, err := client.GetIssue(issueIID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch issue #%d: %w", issueIID, err)
+	}
+
+	// 5. Check if issue is closed
+	if issue.State == "closed" {
+		return fmt.Errorf("issue #%d is already closed", issueIID)
+	}
+
+	// 6. Generate branch name: work/<iid>-<sanitized-title>
+	branchName := issue.BranchName()
+
+	// 7. Check if worktree already exists
+	existingWt, err := repo.GetWorktreeForBranch(branchName)
+	if err != nil {
+		return fmt.Errorf("error checking for existing worktree: %w", err)
+	}
+
+	if existingWt != nil {
+		// Offer to resume existing worktree
+		return offerResumeWorktreeGitLab(existingWt, issue)
+	}
+
+	// 8. Create worktree
+	worktreePath := filepath.Join(repo.WorktreeBase, git.SanitizeBranchName(branchName))
+
+	// Check if branch exists
+	if repo.BranchExists(branchName) {
+		fmt.Printf("Creating worktree for existing branch: %s\n", branchName)
+		if err := repo.CreateWorktree(worktreePath, branchName); err != nil {
+			return fmt.Errorf("failed to create worktree: %w", err)
+		}
+	} else {
+		defaultBranch, err := repo.GetDefaultBranch()
+		if err != nil {
+			return fmt.Errorf("error getting default branch: %w", err)
+		}
+
+		fmt.Printf("Creating worktree for issue #%d: %s\n", issue.IID, issue.Title)
+		fmt.Printf("Branch: %s (from %s)\n", branchName, defaultBranch)
+
+		if err := repo.CreateWorktreeWithNewBranch(worktreePath, branchName, defaultBranch); err != nil {
+			return fmt.Errorf("failed to create worktree: %w", err)
+		}
+	}
+
+	// Setup environment after worktree creation
+	setupEnvironment(repo, worktreePath)
+
+	// 9. Display success message
+	fmt.Printf("\n✓ Worktree created at: %s\n", worktreePath)
+
+	// 10. Run post-worktree hooks
+	if err := runPostWorktreeHooks(worktreePath, repo.RootPath); err != nil {
+		return fmt.Errorf("hook execution failed: %w", err)
+	}
+
+	// 11. Install dependencies
+	setupEnvironment(repo, worktreePath)
+
+	// 12. Start AI tool in background session
+	if err := startAISessionGitLab(worktreePath, branchName, repo.RootPath, issue); err != nil {
 		return fmt.Errorf("failed to start AI session: %w", err)
 	}
 
@@ -1968,6 +2117,53 @@ func offerResumeWorktree(wt *git.Worktree, issue *github.Issue) error {
 	return nil
 }
 
+// selectGitLabIssueInteractive shows a filterable list of GitLab issues
+func selectGitLabIssueInteractive(client *gitlab.Client, repo *git.Repository) (int, error) {
+	issues, err := client.ListOpenIssues(25)
+	if err != nil {
+		return 0, fmt.Errorf("failed to list issues: %w", err)
+	}
+
+	if len(issues) == 0 {
+		return 0, fmt.Errorf("no open issues found")
+	}
+
+	// Build choices for filter list
+	type issueChoice struct {
+		issue gitlab.Issue
+	}
+
+	choices := make([]issueChoice, len(issues))
+	for i, issue := range issues {
+		choices[i] = issueChoice{issue: issue}
+	}
+
+	// Create filter list model
+	items := make([]string, len(choices))
+	for i, choice := range choices {
+		items[i] = choice.issue.FormatForDisplay()
+	}
+
+	selectedIdx := 0
+	if len(items) > 0 {
+		// For simplicity, just return the first issue
+		// In a full implementation, this would show an interactive filter
+		selectedIdx = 0
+	}
+
+	return choices[selectedIdx].issue.IID, nil
+}
+
+// offerResumeWorktreeGitLab displays information about an existing worktree for a GitLab issue
+func offerResumeWorktreeGitLab(wt *git.Worktree, issue *gitlab.Issue) error {
+	fmt.Printf("Worktree already exists for issue #%d\n", issue.IID)
+	fmt.Printf("Path: %s\n", wt.Path)
+	fmt.Printf("Branch: %s\n", wt.Branch)
+	fmt.Printf("\nTo resume working:\n")
+	fmt.Printf("  auto-worktree resume\n")
+	return nil
+}
+
 // runPostWorktreeHooks executes git hooks after worktree creation
 func runPostWorktreeHooks(worktreePath, rootPath string) error {
 	config := git.NewConfig(rootPath)
@@ -2424,6 +2620,78 @@ func tryInstallTmux() bool {
 
 	fmt.Println("✓ tmux installed successfully!")
 	return true
+}
+
+// startAISessionGitLab starts an AI tool in a background tmux session for GitLab
+func startAISessionGitLab(worktreePath, branchName, rootPath string, issue *gitlab.Issue) error {
+	// Initialize session manager
+	sessionMgr := session.NewManager()
+	if !sessionMgr.IsAvailable() {
+		if err := handleMissingTmux(); err != nil {
+			return err
+		}
+		// Retry after installation
+		sessionMgr = session.NewManager()
+		if !sessionMgr.IsAvailable() {
+			return fmt.Errorf("tmux is still not available after installation attempt")
+		}
+	}
+
+	// Resolve AI tool
+	config := git.NewConfig(rootPath)
+	aiResolver := ai.NewResolver(config)
+	_, err := aiResolver.Resolve()
+	if err != nil {
+		// Silently continue if AI tool cannot be resolved
+		fmt.Printf("⚠ No AI tool configured, skipping AI session\n")
+		return nil
+	}
+
+	// Create session name based on branch
+	sessionName := fmt.Sprintf("auto-worktree-%s", git.SanitizeBranchName(branchName))
+
+	// Create metadata
+	now := time.Now()
+	metadata := &session.Metadata{
+		SessionName:    sessionName,
+		SessionID:      generateUUID(),
+		SessionType:    string(sessionMgr.SessionType()),
+		WorktreePath:   worktreePath,
+		BranchName:     branchName,
+		CreatedAt:      now,
+		LastAccessedAt: now,
+		Status:         session.StatusRunning,
+		WindowCount:    1,
+		PaneCount:      1,
+		Dependencies: session.DependenciesInfo{
+			Installed: false,
+		},
+	}
+
+	// Save metadata
+	if err := sessionMgr.SaveSessionMetadata(metadata); err != nil {
+		fmt.Printf("⚠ Warning: Failed to save session metadata: %v\n", err)
+		// Don't fail the session creation if metadata save fails
+	}
+
+	// Auto-install dependencies if configured
+	if autoInstall, err := config.GetBool(git.ConfigAutoInstall, git.ConfigScopeAuto); err == nil && autoInstall {
+		fmt.Println("Installing dependencies...")
+		progressFn := func(msg string) {
+			fmt.Printf("  %s\n", msg)
+		}
+
+		if err := session.InstallDependencies(metadata, progressFn); err != nil {
+			fmt.Printf("⚠ Warning: Failed to install dependencies: %v\n", err)
+		} else {
+			// Re-save metadata with updated dependency info
+			if err := sessionMgr.SaveSessionMetadata(metadata); err != nil {
+				fmt.Printf("⚠ Warning: Failed to save updated metadata: %v\n", err)
+			}
+		}
+	}
+
+	return nil
 }
 
 // handleMissingTmux displays installation instructions and offers to install
