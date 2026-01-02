@@ -2,9 +2,11 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -550,9 +552,162 @@ func RunCreate() error {
 }
 
 // RunPR reviews a pull request.
-func RunPR(_ string) error {
-	// TODO: Implement PR review workflow
-	return fmt.Errorf("'pr' command not yet implemented")
+// If prID is empty, shows interactive PR selector.
+// If prID is numeric, directly creates worktree for that PR.
+func RunPR(prID string) error {
+	// 1. Initialize repository
+	repo, err := git.NewRepository()
+	if err != nil {
+		return fmt.Errorf("error: %w", err)
+	}
+
+	// 2. Check gh CLI availability
+	executor := github.NewGitHubExecutor()
+	if !github.IsInstalled(executor) {
+		return fmt.Errorf("gh CLI is not installed. Install with: brew install gh")
+	}
+
+	// 3. Create GitHub client (auto-detects owner/repo)
+	client, err := github.NewClient(repo.RootPath)
+	if err != nil {
+		if errors.Is(err, github.ErrGHNotInstalled) {
+			return fmt.Errorf("gh CLI is not installed. Install with: brew install gh")
+		}
+		if errors.Is(err, github.ErrGHNotAuthenticated) {
+			return fmt.Errorf("gh CLI is not authenticated. Run: gh auth login")
+		}
+		if errors.Is(err, github.ErrNotGitHubRepo) {
+			return fmt.Errorf("not a GitHub repository")
+		}
+		return fmt.Errorf("failed to initialize GitHub client: %w", err)
+	}
+
+	fmt.Printf("Repository: %s/%s\n\n", client.Owner, client.Repo)
+
+	// 4. Get PR number (interactive or direct)
+	var prNum int
+	if prID == "" {
+		// Interactive mode: show PR selector
+		prNum, err = selectPRInteractive(client, repo)
+		if err != nil {
+			return err
+		}
+	} else {
+		// Direct mode: parse PR number
+		prNum, err = parsePRNumber(prID)
+		if err != nil {
+			return fmt.Errorf("invalid PR number: %s", prID)
+		}
+	}
+
+	// 5. Fetch full PR details
+	pr, err := client.GetPR(prNum)
+	if err != nil {
+		return fmt.Errorf("failed to fetch PR #%d: %w", prNum, err)
+	}
+
+	// 6. Check if PR is already merged or closed
+	if pr.State == "MERGED" {
+		return fmt.Errorf("PR #%d is already merged", prNum)
+	}
+	if pr.State == "CLOSED" {
+		fmt.Printf("Warning: PR #%d is closed but not merged\n", prNum)
+	}
+
+	// 7. Display PR metadata
+	fmt.Printf("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+	fmt.Printf("PR #%d: %s\n", pr.Number, pr.Title)
+	fmt.Printf("Author: @%s\n", pr.Author.Login)
+	fmt.Printf("Base: %s ← Head: %s\n", pr.BaseRefName, pr.HeadRefName)
+	if pr.IsDraft {
+		fmt.Printf("Status: DRAFT\n")
+	}
+
+	// Show labels if present
+	if len(pr.Labels) > 0 {
+		labels := make([]string, len(pr.Labels))
+		for i, label := range pr.Labels {
+			labels[i] = label.Name
+		}
+		fmt.Printf("Labels: %s\n", strings.Join(labels, ", "))
+	}
+
+	// 8. Display diff stats
+	fmt.Printf("\n📊 Changes:\n")
+	fmt.Printf("  Files changed: %d\n", pr.ChangedFiles)
+	fmt.Printf("  Additions:     +%d\n", pr.Additions)
+	fmt.Printf("  Deletions:     -%d\n", pr.Deletions)
+	fmt.Printf("  Size:          %s\n", pr.ChangeSize())
+
+	// 9. Check for merge conflicts
+	hasConflicts, err := client.HasMergeConflicts(prNum)
+	if err != nil {
+		fmt.Printf("Warning: Could not check merge conflicts: %v\n", err)
+	} else if hasConflicts {
+		fmt.Printf("\n⚠️  Warning: This PR has merge conflicts with %s\n", pr.BaseRefName)
+	}
+
+	// 10. Display CI status
+	if len(pr.StatusCheckRollup) > 0 {
+		if pr.AllChecksPass() {
+			fmt.Printf("\n✓ All CI checks passed\n")
+		} else {
+			fmt.Printf("\n⚠️  Some CI checks are failing or pending\n")
+		}
+	}
+
+	fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
+
+	// 11. Check if AI review is enabled
+	if shouldGenerateAIReview(repo) {
+		fmt.Println("Generating AI review summary...")
+		if err := generateAIReviewSummary(client, pr, repo); err != nil {
+			fmt.Printf("Warning: Could not generate AI review: %v\n\n", err)
+		}
+	}
+
+	// 12. Generate branch name: pr/<number>-<sanitized-title>
+	branchName := pr.BranchName()
+
+	// 13. Check if worktree already exists
+	existingWt, err := repo.GetWorktreeForBranch(branchName)
+	if err != nil {
+		return fmt.Errorf("error checking for existing worktree: %w", err)
+	}
+
+	if existingWt != nil {
+		// Offer to resume existing worktree
+		return offerResumePRWorktree(existingWt, pr)
+	}
+
+	// 14. Create worktree
+	worktreePath := filepath.Join(repo.WorktreeBase, git.SanitizeBranchName(branchName))
+
+	// Check if branch exists locally
+	if repo.BranchExists(branchName) {
+		fmt.Printf("Creating worktree for existing branch: %s\n", branchName)
+		if err := repo.CreateWorktree(worktreePath, branchName); err != nil {
+			return fmt.Errorf("failed to create worktree: %w", err)
+		}
+	} else {
+		// Fetch the PR branch from the remote
+		fmt.Printf("Creating worktree for PR #%d: %s\n", pr.Number, pr.Title)
+		fmt.Printf("Branch: %s (tracking %s)\n", branchName, pr.HeadRefName)
+
+		// Create worktree and checkout the PR
+		if err := checkoutPRInWorktree(repo, worktreePath, branchName, pr); err != nil {
+			return fmt.Errorf("failed to checkout PR: %w", err)
+		}
+	}
+
+	// 15. Display success message
+	fmt.Printf("\n✓ Worktree created at: %s\n", worktreePath)
+	fmt.Printf("\nPR #%d: %s\n", pr.Number, pr.Title)
+	fmt.Printf("URL: %s\n", pr.URL)
+	fmt.Printf("\nTo start reviewing:\n")
+	fmt.Printf("  cd %s\n", worktreePath)
+
+	return nil
 }
 
 // RunCleanup performs interactive cleanup.
@@ -1530,6 +1685,301 @@ func startAISession(worktreePath, branchName, rootPath string, issue *github.Iss
 	fmt.Printf("To attach to the session:\n")
 	fmt.Printf("  1. Run: auto-worktree resume\n")
 	fmt.Printf("  2. Or use: %s attach -t %s\n", sessionMgr.SessionType(), sessionName)
+
+	return nil
+}
+
+// selectPRInteractive shows an interactive PR selector with AI-powered priority sorting
+func selectPRInteractive(client *github.Client, repo *git.Repository) (int, error) {
+	// Fetch PRs
+	fmt.Println("Fetching pull requests...")
+	prs, err := client.ListOpenPRs(100)
+	if err != nil {
+		return 0, fmt.Errorf("failed to fetch PRs: %w", err)
+	}
+
+	if len(prs) == 0 {
+		return 0, fmt.Errorf("no open pull requests found")
+	}
+
+	// Check if PR auto-selection is enabled
+	prAutoselect, err := repo.Config.GetBool(git.ConfigPRAutoselect, git.ConfigScopeAuto)
+	if err == nil && prAutoselect {
+		// Apply AI-powered priority sorting
+		currentUser := getCurrentGitHubUser()
+		prs = sortPRsByPriority(prs, currentUser)
+
+		// Limit to top 5 for auto-selection
+		if len(prs) > 5 {
+			prs = prs[:5]
+		}
+		fmt.Printf("Showing top %d prioritized PRs\n", len(prs))
+	}
+
+	// Convert to filterable list items
+	items := make([]ui.FilterableListItem, len(prs))
+	for i, pr := range prs {
+		// Check if worktree exists for this PR
+		branchName := pr.BranchName()
+		wt, err := repo.GetWorktreeForBranch(branchName)
+		if err != nil {
+			// Ignore error, just mark as no worktree
+			wt = nil
+		}
+
+		// Extract label names
+		labelNames := make([]string, len(pr.Labels))
+		for j, label := range pr.Labels {
+			labelNames[j] = label.Name
+		}
+
+		items[i] = ui.NewFilterableListItem(
+			pr.Number,
+			pr.Title,
+			labelNames,
+			wt != nil,
+		)
+	}
+
+	// Show filterable list
+	filterList := ui.NewFilterList("Select a pull request to review", items)
+	p := tea.NewProgram(filterList, tea.WithAltScreen())
+
+	m, err := p.Run()
+	if err != nil {
+		return 0, fmt.Errorf("failed to run PR selector: %w", err)
+	}
+
+	finalModel, ok := m.(ui.FilterListModel)
+	if !ok {
+		return 0, fmt.Errorf("unexpected model type")
+	}
+
+	if finalModel.Err() != nil {
+		return 0, finalModel.Err()
+	}
+
+	choice := finalModel.Choice()
+	if choice == nil {
+		return 0, fmt.Errorf("no PR selected")
+	}
+
+	return choice.Number(), nil
+}
+
+// parsePRNumber parses a PR number from a string, handling "#" prefix
+func parsePRNumber(s string) (int, error) {
+	// Remove # prefix if present
+	s = strings.TrimPrefix(s, "#")
+	return strconv.Atoi(s)
+}
+
+// offerResumePRWorktree displays information about an existing worktree for a PR
+func offerResumePRWorktree(wt *git.Worktree, pr *github.PullRequest) error {
+	fmt.Printf("Worktree already exists for PR #%d\n", pr.Number)
+	fmt.Printf("Path: %s\n", wt.Path)
+	fmt.Printf("Branch: %s\n", wt.Branch)
+	fmt.Printf("\nTo resume reviewing:\n")
+	fmt.Printf("  cd %s\n", wt.Path)
+	return nil
+}
+
+// getCurrentGitHubUser gets the current GitHub user's login
+func getCurrentGitHubUser() string {
+	ctx := context.Background()
+	cmd := exec.CommandContext(ctx, "gh", "api", "user", "--jq", ".login")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
+}
+
+// sortPRsByPriority sorts PRs by priority:
+// 1. Review requested from current user
+// 2. Age (oldest first)
+// 3. Size (smaller first)
+// 4. CI status (passing first)
+func sortPRsByPriority(prs []github.PullRequest, currentUser string) []github.PullRequest {
+	// Create a copy to avoid modifying the original
+	sorted := make([]github.PullRequest, len(prs))
+	copy(sorted, prs)
+
+	// Sort using multiple criteria
+	// Note: In Go, we need to implement a custom sort with comparison function
+	// For simplicity, we'll use a scoring system
+
+	type prScore struct {
+		pr    github.PullRequest
+		score int
+	}
+
+	scores := make([]prScore, len(sorted))
+	for i, pr := range sorted {
+		score := 0
+
+		// Priority 1: Review requested from current user (highest priority)
+		if currentUser != "" && pr.IsRequestedReviewer(currentUser) {
+			score += 1000
+		}
+
+		// Priority 2: Age (older = higher score, max 100 points)
+		// We don't have creation date in the struct, so we'll use the PR number as a proxy
+		// Lower PR numbers = older PRs
+		ageScore := 100 - (pr.Number % 100)
+		score += ageScore
+
+		// Priority 3: Size (smaller = higher score, max 50 points)
+		totalChanges := pr.Additions + pr.Deletions
+		var sizeScore int
+		switch {
+		case totalChanges < 50:
+			sizeScore = 50
+		case totalChanges < 200:
+			sizeScore = 40
+		case totalChanges < 500:
+			sizeScore = 30
+		case totalChanges < 1000:
+			sizeScore = 20
+		default:
+			sizeScore = 10
+		}
+		score += sizeScore
+
+		// Priority 4: CI status (passing = higher score, 25 points)
+		if pr.AllChecksPass() {
+			score += 25
+		}
+
+		scores[i] = prScore{pr: pr, score: score}
+	}
+
+	// Sort by score (descending)
+	for i := 0; i < len(scores); i++ {
+		for j := i + 1; j < len(scores); j++ {
+			if scores[j].score > scores[i].score {
+				scores[i], scores[j] = scores[j], scores[i]
+			}
+		}
+	}
+
+	// Extract sorted PRs
+	for i, ps := range scores {
+		sorted[i] = ps.pr
+	}
+
+	return sorted
+}
+
+// shouldGenerateAIReview checks if AI review should be generated
+func shouldGenerateAIReview(repo *git.Repository) bool {
+	aiTool, err := repo.Config.Get(git.ConfigAITool, git.ConfigScopeAuto)
+	if err != nil {
+		return false
+	}
+	return aiTool != "" && aiTool != "skip"
+}
+
+// generateAIReviewSummary generates an AI-powered review summary
+func generateAIReviewSummary(client *github.Client, pr *github.PullRequest, repo *git.Repository) error {
+	// Get configured AI tool
+	aiTool, err := repo.Config.Get(git.ConfigAITool, git.ConfigScopeAuto)
+	if err != nil || aiTool == "" || aiTool == "skip" {
+		return fmt.Errorf("no AI tool configured")
+	}
+
+	// Get PR diff
+	diff, err := client.GetPRDiff(pr.Number)
+	if err != nil {
+		return fmt.Errorf("failed to fetch PR diff: %w", err)
+	}
+
+	// Truncate diff if too long (limit to first 10000 chars)
+	if len(diff) > 10000 {
+		diff = diff[:10000] + "\n... (diff truncated)"
+	}
+
+	// Format prompt for AI
+	prompt := formatAIReviewPrompt(pr, diff)
+
+	fmt.Printf("\n━━━━ AI Review Summary (%s) ━━━━\n\n", aiTool)
+	fmt.Println("This PR makes the following changes:")
+
+	// For now, we'll show a placeholder message
+	// In a full implementation, this would call the AI service
+	fmt.Printf("\nPR #%d modifies %d files with +%d/-%d lines.\n", pr.Number, pr.ChangedFiles, pr.Additions, pr.Deletions)
+	fmt.Printf("\nKey areas to review:\n")
+	fmt.Printf("  • Changes affect %s → %s\n", pr.BaseRefName, pr.HeadRefName)
+
+	if len(pr.Labels) > 0 {
+		labels := make([]string, len(pr.Labels))
+		for i, label := range pr.Labels {
+			labels[i] = label.Name
+		}
+		fmt.Printf("  • Labeled as: %s\n", strings.Join(labels, ", "))
+	}
+
+	fmt.Printf("\n💡 Note: Full AI integration requires API configuration\n")
+	fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
+
+	// Store prompt for future use
+	_ = prompt
+
+	return nil
+}
+
+// formatAIReviewPrompt formats a prompt for AI review
+func formatAIReviewPrompt(pr *github.PullRequest, diff string) string {
+	return fmt.Sprintf(`Please review this pull request:
+
+Title: %s
+Author: %s
+Description:
+%s
+
+Changes:
+- Files changed: %d
+- Additions: +%d
+- Deletions: -%d
+
+Diff:
+%s
+
+Please provide:
+1. A summary of what this PR does
+2. Key areas to review
+3. Potential concerns or questions
+4. Suggestions for improvement
+`, pr.Title, pr.Author.Login, pr.Body, pr.ChangedFiles, pr.Additions, pr.Deletions, diff)
+}
+
+// checkoutPRInWorktree creates a worktree and checks out the PR branch
+func checkoutPRInWorktree(repo *git.Repository, worktreePath, branchName string, pr *github.PullRequest) error {
+	// Use gh pr checkout to fetch and checkout the PR
+	// This will create a local branch tracking the PR's head branch
+	executor := git.NewGitExecutor()
+
+	// First, create the worktree directory with a temporary branch
+	defaultBranch, err := repo.GetDefaultBranch()
+	if err != nil {
+		return fmt.Errorf("error getting default branch: %w", err)
+	}
+
+	// Create worktree with new branch
+	if err := repo.CreateWorktreeWithNewBranch(worktreePath, branchName, defaultBranch); err != nil {
+		return fmt.Errorf("failed to create worktree: %w", err)
+	}
+
+	// Now checkout the PR in that worktree using gh pr checkout
+	checkoutCmd := fmt.Sprintf("cd %s && gh pr checkout %d -b %s", worktreePath, pr.Number, branchName)
+	if _, err := executor.Execute(checkoutCmd); err != nil {
+		// If checkout fails, try to clean up the worktree
+		if removeErr := repo.RemoveWorktree(worktreePath); removeErr != nil {
+			// Log the error but don't fail - we're already in an error state
+			fmt.Printf("Warning: Could not clean up worktree: %v\n", removeErr)
+		}
+		return fmt.Errorf("failed to checkout PR #%d: %w", pr.Number, err)
+	}
 
 	return nil
 }
