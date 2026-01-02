@@ -423,7 +423,10 @@ func RunCreate() error {
 		return fmt.Errorf("error getting title input: %w", err)
 	}
 
-	titleModel := result.(ui.InputModel)
+	titleModel, ok := result.(ui.InputModel)
+	if !ok {
+		return fmt.Errorf("unexpected model type")
+	}
 	if titleModel.Err() != nil {
 		return fmt.Errorf("canceled")
 	}
@@ -441,7 +444,10 @@ func RunCreate() error {
 		return fmt.Errorf("error getting body input: %w", err)
 	}
 
-	bodyModel := result.(ui.TextAreaModel)
+	bodyModel, ok := result.(ui.TextAreaModel)
+	if !ok {
+		return fmt.Errorf("unexpected model type")
+	}
 	if bodyModel.Err() != nil {
 		return fmt.Errorf("canceled")
 	}
@@ -457,7 +463,10 @@ func RunCreate() error {
 		return fmt.Errorf("error getting confirmation: %w", err)
 	}
 
-	confirmed := result.(*ui.ConfirmModel)
+	confirmed, ok := result.(*ui.ConfirmModel)
+	if !ok {
+		return fmt.Errorf("unexpected model type")
+	}
 	if !confirmed.GetChoice() {
 		fmt.Println("Issue creation canceled.")
 		return nil
@@ -484,7 +493,10 @@ func RunCreate() error {
 		return fmt.Errorf("error getting worktree confirmation: %w", err)
 	}
 
-	wtConfirmed := result.(*ui.ConfirmModel)
+	wtConfirmed, ok := result.(*ui.ConfirmModel)
+	if !ok {
+		return fmt.Errorf("unexpected model type")
+	}
 	if !wtConfirmed.GetChoice() {
 		return nil
 	}
