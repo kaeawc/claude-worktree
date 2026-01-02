@@ -245,6 +245,46 @@ func RunNew() error {
 
 	fmt.Printf("✓ Worktree created at: %s\n", worktreePath)
 
+	// Create tmux session with metadata
+	sessionMgr := session.NewManager()
+	if !sessionMgr.IsAvailable() {
+		if err := handleMissingTmux(); err != nil {
+			return err
+		}
+		// Retry after installation
+		sessionMgr = session.NewManager()
+		if !sessionMgr.IsAvailable() {
+			return fmt.Errorf("tmux is still not available after installation attempt")
+		}
+	}
+
+	sessionName := session.GenerateSessionName(branchName)
+	exists, err := sessionMgr.HasSession(sessionName)
+	if err != nil {
+		return fmt.Errorf("failed to check session existence: %w", err)
+	}
+
+	if !exists {
+		fmt.Println("\nSetting up tmux session...")
+		config := git.NewConfig(repo.RootPath)
+		err := createSessionWithMetadata(sessionMgr, config, sessionName, branchName, worktreePath, []string{"bash"})
+		if err != nil {
+			return fmt.Errorf("failed to create tmux session: %w", err)
+		}
+		fmt.Printf("✓ Tmux session created: %s\n", sessionName)
+	}
+
+	// Attach to the session
+	fmt.Printf("\nAttaching to session: %s\n", sessionName)
+	if err := sessionMgr.AttachToSession(sessionName); err != nil {
+		fmt.Printf("⚠ Failed to attach to session: %v\n", err)
+		fmt.Printf("You can attach manually with:\n")
+		fmt.Printf("  tmux attach-session -t %s\n", sessionName)
+		fmt.Printf("Or use:\n")
+		fmt.Printf("  auto-worktree resume\n")
+		return nil
+	}
+
 	return nil
 }
 
