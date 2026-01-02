@@ -18,8 +18,8 @@ type ConfirmModel struct {
 }
 
 // NewConfirmModel creates a new confirmation dialog
-func NewConfirmModel(prompt string) *ConfirmModel {
-	return &ConfirmModel{
+func NewConfirmModel(prompt string) ConfirmModel {
+	return ConfirmModel{
 		prompt:   prompt,
 		selected: 1, // Default to "No" for safety
 	}

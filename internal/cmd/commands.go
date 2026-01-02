@@ -543,7 +543,7 @@ func RunCreate() error {
 		return fmt.Errorf("error getting confirmation: %w", err)
 	}
 
-	confirmed, ok := result.(*ui.ConfirmModel)
+	confirmed, ok := result.(ui.ConfirmModel)
 	if !ok {
 		return fmt.Errorf("unexpected model type")
 	}
@@ -573,7 +573,7 @@ func RunCreate() error {
 		return fmt.Errorf("error getting worktree confirmation: %w", err)
 	}
 
-	wtConfirmed, ok := result.(*ui.ConfirmModel)
+	wtConfirmed, ok := result.(ui.ConfirmModel)
 	if !ok {
 		return fmt.Errorf("unexpected model type")
 	}
@@ -1257,7 +1257,7 @@ func resetSettings(cfg *git.Config) error {
 		return fmt.Errorf("failed to run confirmation: %w", err)
 	}
 
-	confirmModel, ok := model.(*ui.ConfirmModel)
+	confirmModel, ok := model.(ui.ConfirmModel)
 	if !ok {
 		return fmt.Errorf("unexpected model type")
 	}
