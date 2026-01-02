@@ -208,6 +208,30 @@ func (r *Repository) ListWorktreesWithMergeStatus() ([]*Worktree, error) {
 	return worktrees, nil
 }
 
+// FilterOutMainBranch removes the main/root repository from a list of worktrees
+// The main repository is identified by its path being equal to the repository root path
+func (r *Repository) FilterOutMainBranch(worktrees []*Worktree) []*Worktree {
+	var filtered []*Worktree
+	for _, wt := range worktrees {
+		// Skip the main worktree (the repository root)
+		if wt.Path == r.RootPath {
+			continue
+		}
+		filtered = append(filtered, wt)
+	}
+	return filtered
+}
+
+// ListWorktreesWithMergeStatusExcludingMain returns all worktrees enriched with merge status,
+// excluding the main/root repository
+func (r *Repository) ListWorktreesWithMergeStatusExcludingMain() ([]*Worktree, error) {
+	worktrees, err := r.ListWorktreesWithMergeStatus()
+	if err != nil {
+		return nil, err
+	}
+	return r.FilterOutMainBranch(worktrees), nil
+}
+
 // GetCleanupCandidates returns worktrees that should be cleaned up
 // Returns merged worktrees first, then stale worktrees
 func (r *Repository) GetCleanupCandidates() ([]*Worktree, error) {
@@ -216,15 +240,13 @@ func (r *Repository) GetCleanupCandidates() ([]*Worktree, error) {
 		return nil, err
 	}
 
+	// Filter out main branch
+	worktrees = r.FilterOutMainBranch(worktrees)
+
 	var merged []*Worktree
 	var stale []*Worktree
 
 	for _, wt := range worktrees {
-		// Skip the main worktree (the repository root)
-		if wt.Path == r.RootPath {
-			continue
-		}
-
 		if wt.IsMerged() {
 			merged = append(merged, wt)
 		} else if wt.IsStale() {

@@ -118,8 +118,9 @@ func RunList() error {
 		return fmt.Errorf("error: %w", err)
 	}
 
-	// Use ListWorktreesWithMergeStatus to get merge status information
-	worktrees, err := repo.ListWorktreesWithMergeStatus()
+	// Use ListWorktreesWithMergeStatusExcludingMain to get merge status information,
+	// excluding the main repository root
+	worktrees, err := repo.ListWorktreesWithMergeStatusExcludingMain()
 	if err != nil {
 		return fmt.Errorf("error listing worktrees: %w", err)
 	}
@@ -398,8 +399,8 @@ func RunResume() error {
 
 	sessionMgr := session.NewManager()
 
-	// Get all worktrees
-	worktrees, err := repo.ListWorktreesWithMergeStatus()
+	// Get all worktrees, excluding the main repository root
+	worktrees, err := repo.ListWorktreesWithMergeStatusExcludingMain()
 	if err != nil {
 		return fmt.Errorf("error listing worktrees: %w", err)
 	}
