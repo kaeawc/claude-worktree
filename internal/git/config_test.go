@@ -502,7 +502,7 @@ func TestConfig_UnsetAll(t *testing.T) {
 		}
 	}
 	// Should unset all the config keys defined in UnsetAll
-	expectedUnsetCount := 16 // Number of keys in UnsetAll method
+	expectedUnsetCount := 18 // Number of keys in UnsetAll method
 	if unsetCount != expectedUnsetCount {
 		t.Errorf("Expected %d unset commands, got %d", expectedUnsetCount, unsetCount)
 	}

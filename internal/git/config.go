@@ -37,6 +37,10 @@ const (
 	ConfigIssueTemplatesDisabled = "auto-worktree.issue-templates-disabled"
 	ConfigIssueTemplatesNoPrompt = "auto-worktree.issue-templates-no-prompt"
 	ConfigIssueTemplatesDetected = "auto-worktree.issue-templates-detected"
+
+	// Environment setup configuration
+	ConfigAutoInstall    = "auto-worktree.auto-install"
+	ConfigPackageManager = "auto-worktree.package-manager"
 )
 
 // Valid values for specific configuration keys
@@ -238,7 +242,8 @@ func (c *Config) Validate(key, value string) error {
 		return fmt.Errorf("invalid AI tool: %s (must be one of: %s)", value, strings.Join(ValidAITools, ", "))
 
 	case ConfigIssueAutoselect, ConfigPRAutoselect, ConfigRunHooks, ConfigFailOnHookError,
-		ConfigIssueTemplatesDisabled, ConfigIssueTemplatesNoPrompt, ConfigIssueTemplatesDetected:
+		ConfigIssueTemplatesDisabled, ConfigIssueTemplatesNoPrompt, ConfigIssueTemplatesDetected,
+		ConfigAutoInstall:
 		// These should be boolean values
 		if value != "true" && value != "false" {
 			return fmt.Errorf("invalid boolean value: %s (must be 'true' or 'false')", value)
@@ -289,6 +294,16 @@ func (c *Config) GetFailOnHookError() bool {
 	return c.GetBoolWithDefault(ConfigFailOnHookError, false, ConfigScopeAuto)
 }
 
+// GetAutoInstall returns whether to automatically install dependencies (default: true)
+func (c *Config) GetAutoInstall() bool {
+	return c.GetBoolWithDefault(ConfigAutoInstall, true, ConfigScopeAuto)
+}
+
+// GetPackageManager returns the configured package manager override
+func (c *Config) GetPackageManager() string {
+	return c.GetWithDefault(ConfigPackageManager, "", ConfigScopeAuto)
+}
+
 // UnsetAll removes all auto-worktree configuration
 func (c *Config) UnsetAll(scope ConfigScope) error {
 	keys := []string{
@@ -308,6 +323,8 @@ func (c *Config) UnsetAll(scope ConfigScope) error {
 		ConfigIssueTemplatesDisabled,
 		ConfigIssueTemplatesNoPrompt,
 		ConfigIssueTemplatesDetected,
+		ConfigAutoInstall,
+		ConfigPackageManager,
 	}
 
 	for _, key := range keys {

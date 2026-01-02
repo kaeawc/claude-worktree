@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kaeawc/auto-worktree/internal/environment"
 	"github.com/kaeawc/auto-worktree/internal/git"
 	"github.com/kaeawc/auto-worktree/internal/github"
 	"github.com/kaeawc/auto-worktree/internal/ui"
@@ -249,23 +250,76 @@ func createWorktree(repo *git.Repository, worktreePath, branchName string, useEx
 
 		fmt.Printf("Creating worktree for existing branch: %s\n", branchName)
 
-		return repo.CreateWorktree(worktreePath, branchName)
+		if err := repo.CreateWorktree(worktreePath, branchName); err != nil {
+			return err
+		}
+	} else {
+		// Check if branch already exists
+		if repo.BranchExists(branchName) {
+			return fmt.Errorf("branch %s already exists. Use --existing flag to create worktree for it", branchName)
+		}
+
+		// Get default branch as base
+		defaultBranch, err := repo.GetDefaultBranch()
+		if err != nil {
+			return fmt.Errorf("error getting default branch: %w", err)
+		}
+
+		fmt.Printf("Creating worktree with new branch: %s (from %s)\n", branchName, defaultBranch)
+
+		if err := repo.CreateWorktreeWithNewBranch(worktreePath, branchName, defaultBranch); err != nil {
+			return err
+		}
 	}
 
-	// Check if branch already exists
-	if repo.BranchExists(branchName) {
-		return fmt.Errorf("branch %s already exists. Use --existing flag to create worktree for it", branchName)
+	// Setup environment after worktree creation
+	setupEnvironment(repo, worktreePath)
+
+	return nil
+}
+
+// setupEnvironment runs environment setup for a worktree
+func setupEnvironment(repo *git.Repository, worktreePath string) {
+	config := git.NewConfig(repo.RootPath)
+
+	// Get configuration
+	autoInstall := config.GetAutoInstall()
+	packageManager := config.GetPackageManager()
+
+	// Skip if auto-install is disabled
+	if !autoInstall {
+		return
 	}
 
-	// Get default branch as base
-	defaultBranch, err := repo.GetDefaultBranch()
-	if err != nil {
-		return fmt.Errorf("error getting default branch: %w", err)
+	// Run setup with spinner
+	spinnerModel := ui.NewSpinnerModel("Detecting project type...")
+	p := tea.NewProgram(spinnerModel)
+
+	// Run setup in background
+	go func() {
+		opts := &environment.SetupOptions{
+			AutoInstall:              autoInstall,
+			ConfiguredPackageManager: packageManager,
+			OnProgress: func(message string) {
+				p.Send(ui.SpinnerUpdateMsg{Message: message})
+			},
+			OnWarning: func(message string) {
+				// Warnings will be shown after spinner completes
+				fmt.Fprintf(os.Stderr, "\nWarning: %s\n", message)
+			},
+		}
+
+		// Run setup
+		err := environment.Setup(worktreePath, opts)
+
+		// Signal completion
+		p.Send(ui.SpinnerDoneMsg{Err: err})
+	}()
+
+	// Run spinner
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error running spinner: %v\n", err)
 	}
-
-	fmt.Printf("Creating worktree with new branch: %s (from %s)\n", branchName, defaultBranch)
-
-	return repo.CreateWorktreeWithNewBranch(worktreePath, branchName, defaultBranch)
 }
 
 // RunResume resumes the last worktree.
@@ -377,6 +431,9 @@ func RunIssue(issueID string) error {
 			return fmt.Errorf("failed to create worktree: %w", err)
 		}
 	}
+
+	// Setup environment after worktree creation
+	setupEnvironment(repo, worktreePath)
 
 	// 10. Display success message
 	fmt.Printf("\n✓ Worktree created at: %s\n", worktreePath)
@@ -520,6 +577,9 @@ func RunCreate() error {
 	if err := repo.CreateWorktreeWithNewBranch(worktreePath, branchName, defaultBranch); err != nil {
 		return fmt.Errorf("failed to create worktree: %w", err)
 	}
+
+	// Setup environment after worktree creation
+	setupEnvironment(repo, worktreePath)
 
 	fmt.Printf("\n✓ Worktree created at: %s\n", worktreePath)
 	fmt.Printf("\nTo start working:\n")
