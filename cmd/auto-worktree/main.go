@@ -2,8 +2,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
 
 	"github.com/kaeawc/auto-worktree/internal/cmd"
 )
@@ -11,6 +13,9 @@ import (
 const version = "0.1.0-dev"
 
 func main() {
+	// Prune orphaned worktrees on startup (silently)
+	_ = pruneOrphanedWorktrees()
+
 	// If no arguments, show interactive menu
 	if len(os.Args) < 2 {
 		if err := cmd.RunInteractiveMenu(); err != nil {
@@ -25,6 +30,15 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// pruneOrphanedWorktrees silently prunes orphaned worktrees using git
+func pruneOrphanedWorktrees() error {
+	// Run git worktree prune in the current directory
+	// This cleans up stale worktree metadata for deleted directories
+	cmd := exec.CommandContext(context.Background(), "git", "worktree", "prune")
+	// Suppress output - we don't want to show this to the user
+	return cmd.Run()
 }
 
 func runCommand(command string) error {

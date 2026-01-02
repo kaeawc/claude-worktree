@@ -24,16 +24,24 @@ import (
 	"github.com/kaeawc/auto-worktree/internal/ui"
 )
 
-// RunInteractiveMenu displays the main interactive menu.
+// RunInteractiveMenu displays the main interactive menu with loop support.
+// The menu loops after each operation, allowing multiple tasks in one session.
+// Press Escape/Ctrl-C to exit the menu completely.
 func RunInteractiveMenu() error {
 	for {
-		if err := showInteractiveMenu(); err != nil {
+		shouldExit, err := showInteractiveMenu()
+		if err != nil {
 			return err
+		}
+		if shouldExit {
+			return nil
 		}
 	}
 }
 
-func showInteractiveMenu() error {
+// showInteractiveMenu displays the menu and handles one selection.
+// Returns (shouldExit, error) where shouldExit indicates if user wants to exit menu.
+func showInteractiveMenu() (bool, error) {
 	items := []ui.MenuItem{
 		ui.NewMenuItem("New Worktree", "Create a new worktree with a new branch", "new"),
 		ui.NewMenuItem("Resume Worktree", "Resume working on the last worktree", "resume"),
@@ -51,22 +59,24 @@ func showInteractiveMenu() error {
 
 	m, err := p.Run()
 	if err != nil {
-		return fmt.Errorf("failed to run menu: %w", err)
+		return false, fmt.Errorf("failed to run menu: %w", err)
 	}
 
 	finalModel, ok := m.(ui.MenuModel)
 	if !ok {
-		return fmt.Errorf("unexpected model type")
+		return false, fmt.Errorf("unexpected model type")
 	}
 
 	choice := finalModel.Choice()
 
+	// Empty choice means user pressed Escape/Ctrl-C - exit menu
 	if choice == "" {
-		return nil
+		return true, nil
 	}
 
-	// Route to the appropriate command handler
-	return routeMenuChoice(choice, true)
+	// Route to the appropriate command handler and loop back on success
+	err = routeMenuChoice(choice, true)
+	return false, err
 }
 
 func routeMenuChoice(choice string, returnToMenu bool) error {
@@ -95,37 +105,9 @@ func routeMenuChoice(choice string, returnToMenu bool) error {
 		return fmt.Errorf("unknown command: %s", choice)
 	}
 
-	// If command succeeded and we should return to menu, do nothing (loop will continue)
-	// If command failed, return the error
-	// If not returning to menu, exit
-	if err != nil {
-		return err
-	}
-
-	if !returnToMenu {
-		return nil
-	}
-
-	// Ask if user wants to return to menu
-	fmt.Println()
-	confirmModel := ui.NewConfirmModel("Return to main menu?")
-	p := tea.NewProgram(confirmModel)
-	result, err := p.Run()
-	if err != nil {
-		return nil
-	}
-
-	confirmed, ok := result.(*ui.ConfirmModel)
-	if !ok {
-		return nil
-	}
-
-	if !confirmed.GetChoice() {
-		return nil
-	}
-
-	// Return nil to continue the loop in showInteractiveMenu
-	return nil
+	// Return any errors that occurred during command execution
+	// If no error and returnToMenu is true, loop will continue automatically
+	return err
 }
 
 // RunList lists all worktrees.
