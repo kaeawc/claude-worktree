@@ -218,8 +218,6 @@ func RunNew() error {
 	}
 
 	fmt.Printf("✓ Worktree created at: %s\n", worktreePath)
-	fmt.Printf("\nTo start working:\n")
-	fmt.Printf("  cd %s\n", worktreePath)
 
 	return nil
 }
@@ -490,12 +488,7 @@ func RunIssue(issueID string) error {
 
 	// 13. Start AI tool in background session
 	if err := startAISession(worktreePath, branchName, repo.RootPath, issue); err != nil {
-		// Non-fatal: warn but continue
-		fmt.Printf("⚠ Failed to start AI session: %v\n", err)
-		fmt.Printf("\nIssue #%d: %s\n", issue.Number, issue.Title)
-		fmt.Printf("URL: %s\n", issue.URL)
-		fmt.Printf("\nTo start working:\n")
-		fmt.Printf("  cd %s\n", worktreePath)
+		return fmt.Errorf("failed to start AI session: %w", err)
 	}
 
 	return nil
@@ -641,24 +634,26 @@ func RunCreate() error {
 
 	// Create tmux session with metadata and auto-install
 	sessionMgr := session.NewManager()
-	if sessionMgr.IsAvailable() {
-		sessionName := session.GenerateSessionName(branchName)
-		exists, _ := sessionMgr.HasSession(sessionName)
-
-		if !exists {
-			fmt.Println("\nSetting up tmux session...")
-			config := git.NewConfig(repo.RootPath)
-			err := createSessionWithMetadata(sessionMgr, config, sessionName, branchName, worktreePath, []string{"bash"})
-			if err != nil {
-				fmt.Printf("⚠ Warning: Failed to create session: %v\n", err)
-			} else {
-				fmt.Printf("✓ Tmux session created: %s\n", sessionName)
-			}
-		}
+	if !sessionMgr.IsAvailable() {
+		return fmt.Errorf("tmux is not available - please install tmux to use this feature")
 	}
 
-	fmt.Printf("\nTo start working:\n")
-	fmt.Printf("  cd %s\n", worktreePath)
+	sessionName := session.GenerateSessionName(branchName)
+	exists, _ := sessionMgr.HasSession(sessionName)
+
+	if !exists {
+		fmt.Println("\nSetting up tmux session...")
+		config := git.NewConfig(repo.RootPath)
+		err := createSessionWithMetadata(sessionMgr, config, sessionName, branchName, worktreePath, []string{"bash"})
+		if err != nil {
+			return fmt.Errorf("failed to create tmux session: %w", err)
+		}
+		fmt.Printf("✓ Tmux session created: %s\n", sessionName)
+	}
+
+	fmt.Printf("\nTo start working, attach to the session:\n")
+	fmt.Printf("  tmux attach-session -t %s\n", sessionName)
+	fmt.Printf("\nOr use auto-worktree resume to attach\n")
 
 	return nil
 }
@@ -816,8 +811,6 @@ func RunPR(prID string) error {
 	fmt.Printf("\n✓ Worktree created at: %s\n", worktreePath)
 	fmt.Printf("\nPR #%d: %s\n", pr.Number, pr.Title)
 	fmt.Printf("URL: %s\n", pr.URL)
-	fmt.Printf("\nTo start reviewing:\n")
-	fmt.Printf("  cd %s\n", worktreePath)
 
 	return nil
 }
@@ -1723,7 +1716,7 @@ func offerResumeWorktree(wt *git.Worktree, issue *github.Issue) error {
 	fmt.Printf("Path: %s\n", wt.Path)
 	fmt.Printf("Branch: %s\n", wt.Branch)
 	fmt.Printf("\nTo resume working:\n")
-	fmt.Printf("  cd %s\n", wt.Path)
+	fmt.Printf("  auto-worktree resume\n")
 	return nil
 }
 
@@ -1739,9 +1732,9 @@ func generateUUID() string {
 	return uuid.New().String()
 }
 
-// createSessionWithMetadata creates a tmux/screen session and saves metadata
+// createSessionWithMetadata creates a tmux session and saves metadata
 func createSessionWithMetadata(sessionMgr session.SessionManager, config *git.Config, sessionName, branchName, worktreePath string, command []string) error {
-	// Create the actual tmux/screen session
+	// Create the actual tmux session
 	if err := sessionMgr.CreateSession(sessionName, worktreePath, command); err != nil {
 		return fmt.Errorf("failed to create session: %w", err)
 	}
@@ -1790,17 +1783,12 @@ func createSessionWithMetadata(sessionMgr session.SessionManager, config *git.Co
 	return nil
 }
 
-// startAISession starts an AI tool in a background tmux/screen session
+// startAISession starts an AI tool in a background tmux session
 func startAISession(worktreePath, branchName, rootPath string, issue *github.Issue) error {
 	// Initialize session manager
 	sessionMgr := session.NewManager()
 	if !sessionMgr.IsAvailable() {
-		fmt.Println("\n⚠ No terminal multiplexer available (install tmux or screen)")
-		fmt.Printf("\nIssue #%d: %s\n", issue.Number, issue.Title)
-		fmt.Printf("URL: %s\n", issue.URL)
-		fmt.Printf("\nTo start working:\n")
-		fmt.Printf("  cd %s\n", worktreePath)
-		return nil
+		return fmt.Errorf("tmux is not available - please install tmux to use this feature")
 	}
 
 	// Resolve AI tool
@@ -1808,12 +1796,7 @@ func startAISession(worktreePath, branchName, rootPath string, issue *github.Iss
 	aiResolver := ai.NewResolver(config)
 	aiTool, err := aiResolver.Resolve()
 	if err != nil {
-		fmt.Printf("\n⚠ %v\n", err)
-		fmt.Printf("\nIssue #%d: %s\n", issue.Number, issue.Title)
-		fmt.Printf("URL: %s\n", issue.URL)
-		fmt.Printf("\nTo start working:\n")
-		fmt.Printf("  cd %s\n", worktreePath)
-		return nil
+		return fmt.Errorf("failed to resolve AI tool: %w", err)
 	}
 
 	// Generate session name
@@ -1943,7 +1926,7 @@ func offerResumePRWorktree(wt *git.Worktree, pr *github.PullRequest) error {
 	fmt.Printf("Path: %s\n", wt.Path)
 	fmt.Printf("Branch: %s\n", wt.Branch)
 	fmt.Printf("\nTo resume reviewing:\n")
-	fmt.Printf("  cd %s\n", wt.Path)
+	fmt.Printf("  auto-worktree resume\n")
 	return nil
 }
 
