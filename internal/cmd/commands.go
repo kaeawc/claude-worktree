@@ -154,7 +154,7 @@ func RunNew() error {
 		return fmt.Errorf("error: %w", err)
 	}
 
-	branchName, useExisting, err := getBranchInput()
+	branchName, useExisting, err := getBranchInput(repo)
 	if err != nil {
 		return err
 	}
@@ -181,7 +181,7 @@ func RunNew() error {
 	return nil
 }
 
-func getBranchInput() (branchName string, useExisting bool, err error) {
+func getBranchInput(repo *git.Repository) (branchName string, useExisting bool, err error) {
 	if len(os.Args) > 2 {
 		// Command line argument provided
 		arg := os.Args[2]
@@ -216,8 +216,12 @@ func getBranchInput() (branchName string, useExisting bool, err error) {
 
 	branchName = finalModel.Value()
 	if branchName == "" {
-		// TODO: Generate random branch name
-		return "", false, fmt.Errorf("random branch names not yet implemented - please provide a branch name")
+		// Generate random branch name
+		branchName, err = repo.GenerateUniqueBranchName(100)
+		if err != nil {
+			return "", false, fmt.Errorf("failed to generate random branch name: %w", err)
+		}
+		fmt.Printf("✓ Generated branch: %s\n", branchName)
 	}
 
 	return branchName, false, nil
