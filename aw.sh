@@ -4838,61 +4838,33 @@ auto-worktree() {
 }
 
 # ============================================================================
-# Zsh completion
+# Shell Completion
 # ============================================================================
+#
+# Load shell completion for auto-worktree and aw commands.
+# Completion files are located in the completions/ directory relative to this script.
 
-_auto_worktree() {
-  local -a commands
-  commands=(
-    'new:Create a new worktree'
-    'resume:Resume an existing worktree'
-    'issue:Work on an issue (GitHub, GitLab, JIRA, or Linear)'
-    'create:Create a new issue with optional template'
-    'pr:Review a GitHub PR or GitLab MR'
-    'list:List existing worktrees'
-    'cleanup:Interactively clean up worktrees'
-    'settings:Configure per-repository settings'
-    'help:Show help message'
-  )
+# Determine the directory where this script is located
+_AW_SCRIPT_DIR="${BASH_SOURCE[0]:-${(%):-%x}}"
+_AW_SCRIPT_DIR="$(cd "$(dirname "$_AW_SCRIPT_DIR")" && pwd)"
 
-  local curcontext="$curcontext" state
+# Load the appropriate completion file based on the current shell
+if [[ -n "$ZSH_VERSION" ]]; then
+  # Zsh completion
+  if [[ -f "$_AW_SCRIPT_DIR/completions/aw.zsh" ]]; then
+    # shellcheck disable=SC1091
+    source "$_AW_SCRIPT_DIR/completions/aw.zsh"
+  fi
+elif [[ -n "$BASH_VERSION" ]]; then
+  # Bash completion
+  if [[ -f "$_AW_SCRIPT_DIR/completions/aw.bash" ]]; then
+    # shellcheck disable=SC1091
+    source "$_AW_SCRIPT_DIR/completions/aw.bash"
+  fi
+fi
 
-  _arguments -C \
-    '1:command:->command' \
-    '*::arg:->args'
-
-  case $state in
-    command)
-      _describe -t commands 'auto-worktree commands' commands
-      ;;
-    args)
-      case $words[1] in
-        issue)
-          local -a issues
-          if command -v gh &>/dev/null; then
-            issues=(${(f)"$(gh issue list --limit 100 --state open --json number,title \
-              --jq '.[] | "\(.number):\(.title | gsub(":";" "))"' 2>/dev/null)"})
-          fi
-          if [[ ${#issues[@]} -gt 0 ]]; then
-            _describe -t issues 'open issues' issues
-          fi
-          ;;
-        pr)
-          local -a prs
-          if command -v gh &>/dev/null; then
-            prs=(${(f)"$(gh pr list --limit 100 --state open --json number,title \
-              --jq '.[] | "\(.number):\(.title | gsub(":";" "))"' 2>/dev/null)"})
-          fi
-          if [[ ${#prs[@]} -gt 0 ]]; then
-            _describe -t prs 'open pull requests' prs
-          fi
-          ;;
-      esac
-      ;;
-  esac
-}
-
-compdef _auto_worktree auto-worktree
+# Clean up temporary variable
+unset _AW_SCRIPT_DIR
 
 # ============================================================================
 # Worktree-aware 'aw' wrapper
@@ -4927,6 +4899,3 @@ aw() {
   # Call auto-worktree with all provided arguments
   auto-worktree "$@"
 }
-
-# Also set up completion for the 'aw' alias
-compdef _auto_worktree aw
