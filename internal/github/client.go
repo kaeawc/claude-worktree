@@ -1,6 +1,7 @@
 package github
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -108,4 +109,30 @@ func (c *Client) execGHInRepo(args ...string) ([]byte, error) {
 	// Prepend repo flag to args
 	fullArgs := append([]string{"-R", fmt.Sprintf("%s/%s", c.Owner, c.Repo)}, args...)
 	return c.execGH(fullArgs...)
+}
+
+// CreateIssue creates a new issue with the given title and body
+// Returns the created issue with its number and URL
+func (c *Client) CreateIssue(title, body string) (*Issue, error) {
+	if title == "" {
+		return nil, fmt.Errorf("issue title cannot be empty")
+	}
+
+	args := []string{"issue", "create", "--title", title}
+	if body != "" {
+		args = append(args, "--body", body)
+	}
+	args = append(args, "--json", "number,title,body,url")
+
+	output, err := c.execGHInRepo(args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create issue: %w", err)
+	}
+
+	var issue Issue
+	if err := json.Unmarshal(output, &issue); err != nil {
+		return nil, fmt.Errorf("failed to parse created issue: %w", err)
+	}
+
+	return &issue, nil
 }

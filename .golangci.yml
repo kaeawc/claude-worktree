@@ -209,6 +209,10 @@ linters:
           - gocognit
           - gocyclo
 
+      - path: internal/ui/
+        linters:
+          - dupl
+
       - path: internal/cmd/commands\.go
         linters:
           - wsl

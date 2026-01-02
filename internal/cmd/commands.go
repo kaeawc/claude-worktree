@@ -386,8 +386,142 @@ func RunIssue(issueID string) error {
 
 // RunCreate creates a new issue.
 func RunCreate() error {
-	// TODO: Implement issue creation
-	return fmt.Errorf("'create' command not yet implemented")
+	// 1. Initialize repository
+	repo, err := git.NewRepository()
+	if err != nil {
+		return fmt.Errorf("error: %w", err)
+	}
+
+	// 2. Check gh CLI availability
+	executor := github.NewGitHubExecutor()
+	if !github.IsInstalled(executor) {
+		return fmt.Errorf("gh CLI is not installed. Install with: brew install gh")
+	}
+
+	// 3. Create GitHub client (auto-detects owner/repo)
+	client, err := github.NewClient(repo.RootPath)
+	if err != nil {
+		if errors.Is(err, github.ErrGHNotInstalled) {
+			return fmt.Errorf("gh CLI is not installed. Install with: brew install gh")
+		}
+		if errors.Is(err, github.ErrGHNotAuthenticated) {
+			return fmt.Errorf("gh CLI is not authenticated. Run: gh auth login")
+		}
+		if errors.Is(err, github.ErrNotGitHubRepo) {
+			return fmt.Errorf("not a GitHub repository")
+		}
+		return fmt.Errorf("failed to initialize GitHub client: %w", err)
+	}
+
+	fmt.Printf("Repository: %s/%s\n\n", client.Owner, client.Repo)
+
+	// 4. Get issue title (interactive)
+	titleInput := ui.NewInput("Issue Title", "Enter a title for the issue")
+	p := tea.NewProgram(titleInput)
+	result, err := p.Run()
+	if err != nil {
+		return fmt.Errorf("error getting title input: %w", err)
+	}
+
+	titleModel, ok := result.(ui.InputModel)
+	if !ok {
+		return fmt.Errorf("unexpected model type")
+	}
+	if titleModel.Err() != nil {
+		return fmt.Errorf("canceled")
+	}
+
+	title := titleModel.Value()
+	if title == "" {
+		return fmt.Errorf("issue title cannot be empty")
+	}
+
+	// 5. Get issue body (interactive, optional)
+	bodyInput := ui.NewTextArea("Issue Description (optional)", "Describe the issue...")
+	p = tea.NewProgram(bodyInput)
+	result, err = p.Run()
+	if err != nil {
+		return fmt.Errorf("error getting body input: %w", err)
+	}
+
+	bodyModel, ok := result.(ui.TextAreaModel)
+	if !ok {
+		return fmt.Errorf("unexpected model type")
+	}
+	if bodyModel.Err() != nil {
+		return fmt.Errorf("canceled")
+	}
+
+	body := bodyModel.Value()
+
+	// 6. Confirm before creating
+	confirmMsg := fmt.Sprintf("Create issue: %s?", title)
+	confirmModel := ui.NewConfirmModel(confirmMsg)
+	p = tea.NewProgram(confirmModel)
+	result, err = p.Run()
+	if err != nil {
+		return fmt.Errorf("error getting confirmation: %w", err)
+	}
+
+	confirmed, ok := result.(*ui.ConfirmModel)
+	if !ok {
+		return fmt.Errorf("unexpected model type")
+	}
+	if !confirmed.GetChoice() {
+		fmt.Println("Issue creation canceled.")
+		return nil
+	}
+
+	// 7. Create the issue
+	fmt.Println("\nCreating issue...")
+	issue, err := client.CreateIssue(title, body)
+	if err != nil {
+		return fmt.Errorf("failed to create issue: %w", err)
+	}
+
+	// 8. Display success message
+	fmt.Printf("\n✓ Issue created successfully!\n")
+	fmt.Printf("\nIssue #%d: %s\n", issue.Number, issue.Title)
+	fmt.Printf("URL: %s\n", issue.URL)
+
+	// 9. Offer to create worktree for the new issue
+	wtConfirmMsg := fmt.Sprintf("Create a worktree for issue #%d?", issue.Number)
+	wtConfirmModel := ui.NewConfirmModel(wtConfirmMsg)
+	p = tea.NewProgram(wtConfirmModel)
+	result, err = p.Run()
+	if err != nil {
+		return fmt.Errorf("error getting worktree confirmation: %w", err)
+	}
+
+	wtConfirmed, ok := result.(*ui.ConfirmModel)
+	if !ok {
+		return fmt.Errorf("unexpected model type")
+	}
+	if !wtConfirmed.GetChoice() {
+		return nil
+	}
+
+	// 10. Create worktree for the new issue
+	branchName := issue.BranchName()
+	worktreePath := filepath.Join(repo.WorktreeBase, git.SanitizeBranchName(branchName))
+
+	defaultBranch, err := repo.GetDefaultBranch()
+	if err != nil {
+		return fmt.Errorf("error getting default branch: %w", err)
+	}
+
+	fmt.Printf("\nCreating worktree for issue #%d...\n", issue.Number)
+	fmt.Printf("Branch: %s (from %s)\n", branchName, defaultBranch)
+
+	if err := repo.CreateWorktreeWithNewBranch(worktreePath, branchName, defaultBranch); err != nil {
+		return fmt.Errorf("failed to create worktree: %w", err)
+	}
+
+	fmt.Printf("\n✓ Worktree created at: %s\n", worktreePath)
+	fmt.Printf("\nTo start working:\n")
+	fmt.Printf("  cd %s\n", worktreePath)
+
+	return nil
 }
 
 // RunPR reviews a pull request.
