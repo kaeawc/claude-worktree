@@ -43,6 +43,7 @@ var (
 // - Green: <1 day (recent)
 func GetWorktreeAgeColor(age time.Duration) lipgloss.Color {
 	days := age.Hours() / 24
+
 	switch {
 	case days > 4:
 		return ColorRed

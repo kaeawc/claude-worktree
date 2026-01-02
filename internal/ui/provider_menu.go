@@ -89,6 +89,8 @@ func (m ProviderMenuModel) Init() tea.Cmd {
 }
 
 // Update handles user input for the provider menu.
+//
+//nolint:dupl // Intentional duplication for different model types
 func (m ProviderMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -99,14 +101,16 @@ func (m ProviderMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q", "esc":
+		case keyCtrlC, "q", keyEsc:
 			m.quitting = true
+
 			return m, tea.Quit
 
-		case "enter":
+		case keyEnter:
 			if selectedItem, ok := m.list.SelectedItem().(ProviderItem); ok {
 				m.choice = selectedItem.provider
 				m.quitting = true
+
 				return m, tea.Quit
 			}
 		}
@@ -114,6 +118,7 @@ func (m ProviderMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
+
 	return m, cmd
 }
 
@@ -122,6 +127,7 @@ func (m ProviderMenuModel) View() string {
 	if m.quitting {
 		return ""
 	}
+
 	return "\n" + m.list.View()
 }
 
@@ -214,6 +220,8 @@ func (m AIToolMenuModel) Init() tea.Cmd {
 }
 
 // Update handles user input for the AI tool menu.
+//
+//nolint:dupl // Intentional duplication for different model types
 func (m AIToolMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -224,14 +232,16 @@ func (m AIToolMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q", "esc":
+		case keyCtrlC, "q", keyEsc:
 			m.quitting = true
+
 			return m, tea.Quit
 
-		case "enter":
+		case keyEnter:
 			if selectedItem, ok := m.list.SelectedItem().(AIToolItem); ok {
 				m.choice = selectedItem.tool
 				m.quitting = true
+
 				return m, tea.Quit
 			}
 		}
@@ -239,6 +249,7 @@ func (m AIToolMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
+
 	return m, cmd
 }
 
@@ -247,6 +258,7 @@ func (m AIToolMenuModel) View() string {
 	if m.quitting {
 		return ""
 	}
+
 	return "\n" + m.list.View()
 }
 

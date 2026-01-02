@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -24,8 +25,9 @@ func (j *JiraProvider) Name() string {
 
 // IsAvailable checks if jira CLI is installed
 func (j *JiraProvider) IsAvailable() bool {
-	cmd := exec.Command("jira", "version")
+	cmd := exec.CommandContext(context.Background(), "jira", "version")
 	err := cmd.Run()
+
 	return err == nil
 }
 
@@ -38,8 +40,9 @@ func (j *JiraProvider) GetIssueStatus(issueID string) (bool, bool, error) {
 	// Use jira view with JSON output
 	// Note: The exact CLI command may vary depending on the jira CLI tool used
 	// This assumes go-jira (https://github.com/go-jira/jira)
-	cmd := exec.Command("jira", "view", issueID, "--template", "json")
+	cmd := exec.CommandContext(context.Background(), "jira", "view", issueID, "--template", "json")
 	output, err := cmd.Output()
+
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			if strings.Contains(string(exitErr.Stderr), "not found") ||
@@ -86,7 +89,7 @@ func (j *JiraProvider) GetIssueStatus(issueID string) (bool, bool, error) {
 }
 
 // GetPRStatus is not applicable for JIRA (no PR concept)
-func (j *JiraProvider) GetPRStatus(prID string) (bool, error) {
+func (j *JiraProvider) GetPRStatus(_ string) (bool, error) {
 	return false, fmt.Errorf("jira does not have pull requests")
 }
 

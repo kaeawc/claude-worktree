@@ -5,6 +5,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const (
+	keyEnter = "enter"
+)
+
 // ConfirmModel represents a yes/no confirmation dialog
 type ConfirmModel struct {
 	prompt   string
@@ -30,7 +34,7 @@ func (m ConfirmModel) Init() tea.Cmd {
 func (m ConfirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		switch keyMsg.String() {
-		case "ctrl+c", "q", "esc":
+		case keyCtrlC, "q", keyEsc:
 			m.quitting = true
 			m.choice = false
 
@@ -56,7 +60,7 @@ func (m ConfirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			return m, tea.Quit
 
-		case "enter":
+		case keyEnter:
 			m.choice = m.selected == 0
 			m.quitting = true
 

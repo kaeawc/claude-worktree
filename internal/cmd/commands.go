@@ -595,6 +595,7 @@ func RunSettings() error {
 	}
 }
 
+//nolint:dupl // Intentional duplication - generic solution would reduce readability
 func runProviderSelection() error {
 	providerMenu := ui.NewProviderMenuModel()
 	p := tea.NewProgram(providerMenu, tea.WithAltScreen())
@@ -604,7 +605,11 @@ func runProviderSelection() error {
 		return fmt.Errorf("error running provider selection: %w", err)
 	}
 
-	m := model.(ui.ProviderMenuModel)
+	m, ok := model.(ui.ProviderMenuModel)
+	if !ok {
+		return fmt.Errorf("unexpected model type")
+	}
+
 	provider := m.GetChoice()
 
 	if provider != "" {
@@ -617,6 +622,7 @@ func runProviderSelection() error {
 	return nil
 }
 
+//nolint:dupl // Intentional duplication - generic solution would reduce readability
 func runAIToolSelection() error {
 	aiToolMenu := ui.NewAIToolMenuModel()
 	p := tea.NewProgram(aiToolMenu, tea.WithAltScreen())
@@ -626,7 +632,11 @@ func runAIToolSelection() error {
 		return fmt.Errorf("error running AI tool selection: %w", err)
 	}
 
-	m := model.(ui.AIToolMenuModel)
+	m, ok := model.(ui.AIToolMenuModel)
+	if !ok {
+		return fmt.Errorf("unexpected model type")
+	}
+
 	tool := m.GetChoice()
 
 	if tool != "" {
