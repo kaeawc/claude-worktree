@@ -1526,10 +1526,10 @@ func startAISession(worktreePath, branchName, rootPath string, issue *github.Iss
 	fmt.Printf("✓ Session started: %s\n", sessionName)
 	fmt.Printf("\nIssue #%d: %s\n", issue.Number, issue.Title)
 	fmt.Printf("URL: %s\n", issue.URL)
-	fmt.Printf("\nSession is running in the background using %s\n", sessionMgr.Type())
+	fmt.Printf("\nSession is running in the background using %s\n", sessionMgr.SessionType())
 	fmt.Printf("To attach to the session:\n")
 	fmt.Printf("  1. Run: auto-worktree resume\n")
-	fmt.Printf("  2. Or use: %s attach -t %s\n", sessionMgr.Type(), sessionName)
+	fmt.Printf("  2. Or use: %s attach -t %s\n", sessionMgr.SessionType(), sessionName)
 
 	return nil
 }

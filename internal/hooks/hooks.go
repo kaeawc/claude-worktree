@@ -1,6 +1,8 @@
+// Package hooks executes git hooks in worktrees
 package hooks
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -38,64 +40,94 @@ func (r *Runner) Run() error {
 	failOnError := r.config.GetFailOnHookError()
 
 	// Find hook directories
-	hookPaths, err := r.findHookPaths()
-	if err != nil {
-		return fmt.Errorf("failed to find hook paths: %w", err)
-	}
+	hookPaths := r.findHookPaths()
 
 	if len(hookPaths) == 0 {
 		// No hooks found, skip silently
 		return nil
 	}
 
+	// Get list of hooks to run
+	hooksToRun := r.getHooksToRun()
+
+	// Execute each hook in order
+	return r.executeHooks(hooksToRun, hookPaths, failOnError)
+}
+
+// getHooksToRun returns the list of hooks to execute
+func (r *Runner) getHooksToRun() []string {
 	// Hooks to run (post-checkout is already run by git automatically)
 	hooksToRun := []string{"post-clone", "post-worktree"}
 
 	// Add custom hooks from config
 	customHooks := r.config.GetWithDefault(git.ConfigCustomHooks, "", git.ConfigScopeAuto)
 	if customHooks != "" {
-		// Split by comma or space
-		for _, hook := range strings.FieldsFunc(customHooks, func(c rune) bool {
-			return c == ',' || c == ' '
-		}) {
-			hook = strings.TrimSpace(hook)
-			if hook != "" {
-				hooksToRun = append(hooksToRun, hook)
-			}
+		hooksToRun = append(hooksToRun, r.parseCustomHooks(customHooks)...)
+	}
+
+	return hooksToRun
+}
+
+// parseCustomHooks parses the custom hooks configuration string
+func (r *Runner) parseCustomHooks(customHooks string) []string {
+	var parsed []string
+
+	// Split by comma or space
+	for _, hook := range strings.FieldsFunc(customHooks, func(c rune) bool {
+		return c == ',' || c == ' '
+	}) {
+		hook = strings.TrimSpace(hook)
+		if hook != "" {
+			parsed = append(parsed, hook)
 		}
 	}
 
-	// Execute each hook in order
+	return parsed
+}
+
+// executeHooks runs each hook across all hook directories
+func (r *Runner) executeHooks(hooksToRun []string, hookPaths []string, failOnError bool) error {
 	for _, hookName := range hooksToRun {
-		executed := false
-
-		// Try to find and execute the hook in each hook directory
-		for _, hookDir := range hookPaths {
-			hookPath := filepath.Join(hookDir, hookName)
-
-			result := r.executeHook(hookPath)
-			if result == hookSuccess {
-				executed = true
-				break // Don't run same hook from other directories
-			} else if result == hookFailed {
-				executed = true
-				fmt.Printf("\n✗ Hook %s failed\n", hookName)
-
-				if failOnError {
-					fmt.Println("To continue despite hook failures, run:")
-					fmt.Println("  git config auto-worktree.fail-on-hook-error false")
-					return fmt.Errorf("hook %s failed", hookName)
-				} else {
-					fmt.Println("⚠ Continuing despite hook failure (auto-worktree.fail-on-hook-error=false)")
-					fmt.Println("  To fail on hook errors, run: git config auto-worktree.fail-on-hook-error true")
-				}
-				break // Don't try other directories for this hook
-			}
-			// hookNotFound: try next directory
+		if err := r.executeHookInPaths(hookName, hookPaths, failOnError); err != nil {
+			return err
 		}
-
-		_ = executed // Hook may not exist, which is fine
 	}
+
+	return nil
+}
+
+// executeHookInPaths tries to execute a hook in each hook directory
+func (r *Runner) executeHookInPaths(hookName string, hookPaths []string, failOnError bool) error {
+	for _, hookDir := range hookPaths {
+		hookPath := filepath.Join(hookDir, hookName)
+
+		result := r.executeHook(hookPath)
+
+		switch result {
+		case hookSuccess:
+			return nil // Don't run same hook from other directories
+		case hookFailed:
+			return r.handleHookFailure(hookName, failOnError)
+		}
+		// hookNotFound: try next directory
+	}
+
+	return nil
+}
+
+// handleHookFailure handles a failed hook based on configuration
+func (r *Runner) handleHookFailure(hookName string, failOnError bool) error {
+	fmt.Printf("\n✗ Hook %s failed\n", hookName)
+
+	if failOnError {
+		fmt.Println("To continue despite hook failures, run:")
+		fmt.Println("  git config auto-worktree.fail-on-hook-error false")
+
+		return fmt.Errorf("hook %s failed", hookName)
+	}
+
+	fmt.Println("⚠ Continuing despite hook failure (auto-worktree.fail-on-hook-error=false)")
+	fmt.Println("  To fail on hook errors, run: git config auto-worktree.fail-on-hook-error true")
 
 	return nil
 }
@@ -131,7 +163,7 @@ func (r *Runner) executeHook(hookPath string) hookResult {
 	branchFlag := "1" // 1 = branch checkout
 
 	// Execute hook
-	cmd := exec.Command(hookPath, prevHead, newHead, branchFlag)
+	cmd := exec.CommandContext(context.Background(), hookPath, prevHead, newHead, branchFlag)
 	cmd.Dir = r.worktreePath
 	cmd.Env = r.prepareHookEnvironment()
 	cmd.Stdout = os.Stdout
@@ -142,11 +174,12 @@ func (r *Runner) executeHook(hookPath string) hookResult {
 	}
 
 	fmt.Printf("✓ Hook %s completed successfully\n", hookName)
+
 	return hookSuccess
 }
 
 // findHookPaths finds all possible hook directories
-func (r *Runner) findHookPaths() ([]string, error) {
+func (r *Runner) findHookPaths() []string {
 	var hookPaths []string
 
 	// 1. Check custom git config core.hooksPath
@@ -175,7 +208,7 @@ func (r *Runner) findHookPaths() ([]string, error) {
 		}
 	}
 
-	return hookPaths, nil
+	return hookPaths
 }
 
 // prepareHookEnvironment prepares the environment for hook execution
@@ -192,6 +225,7 @@ func (r *Runner) prepareHookEnvironment() []string {
 	// Replace PATH in environment
 	var newEnv []string
 	pathSet := false
+
 	for _, e := range env {
 		if strings.HasPrefix(e, "PATH=") {
 			newEnv = append(newEnv, "PATH="+newPath)
@@ -215,6 +249,7 @@ func (r *Runner) getCurrentHead() string {
 	if err != nil {
 		return "HEAD"
 	}
+
 	return head
 }
 
@@ -229,5 +264,6 @@ func dirExists(path string) bool {
 	if err != nil {
 		return false
 	}
+
 	return info.IsDir()
 }

@@ -1,3 +1,4 @@
+// Package ai resolves which AI tool to use based on configuration and availability
 package ai
 
 import (
@@ -87,17 +88,20 @@ func (r *Resolver) getTool(name string) *Tool {
 			}
 		}
 	}
+
 	return nil
 }
 
 // ListAvailable returns all available AI tools
 func (r *Resolver) ListAvailable() []Tool {
 	var tools []Tool
+
 	for _, name := range []string{"claude", "codex", "gemini", "jules"} {
 		if tool := r.getTool(name); tool != nil {
 			tools = append(tools, *tool)
 		}
 	}
+
 	return tools
 }
 

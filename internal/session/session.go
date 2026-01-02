@@ -1,3 +1,4 @@
+// Package session manages terminal multiplexer sessions for worktrees
 package session
 
 import (
@@ -8,47 +9,50 @@ import (
 	"strings"
 )
 
-// SessionType represents the type of terminal multiplexer
-type SessionType string
+// Type represents the type of terminal multiplexer
+type Type string
 
+// Terminal multiplexer types
 const (
-	SessionTypeTmux   SessionType = "tmux"
-	SessionTypeScreen SessionType = "screen"
-	SessionTypeNone   SessionType = "none"
+	TypeTmux   Type = "tmux"
+	TypeScreen Type = "screen"
+	TypeNone   Type = "none"
 )
 
 // Session represents a terminal multiplexer session
 type Session struct {
 	Name      string
-	Type      SessionType
+	Type      Type
 	Directory string
 }
 
 // Manager handles terminal multiplexer sessions
 type Manager struct {
-	sessionType SessionType
+	sessionType Type
 }
 
 // NewManager creates a new session manager
 // It detects which multiplexer is available (tmux preferred, screen fallback)
 func NewManager() *Manager {
 	if commandExists("tmux") {
-		return &Manager{sessionType: SessionTypeTmux}
+		return &Manager{sessionType: TypeTmux}
 	}
+
 	if commandExists("screen") {
-		return &Manager{sessionType: SessionTypeScreen}
+		return &Manager{sessionType: TypeScreen}
 	}
-	return &Manager{sessionType: SessionTypeNone}
+
+	return &Manager{sessionType: TypeNone}
 }
 
-// Type returns the session type this manager uses
-func (m *Manager) Type() SessionType {
+// SessionType returns the session type this manager uses
+func (m *Manager) SessionType() Type {
 	return m.sessionType
 }
 
 // IsAvailable returns true if a session manager is available
 func (m *Manager) IsAvailable() bool {
-	return m.sessionType != SessionTypeNone
+	return m.sessionType != TypeNone
 }
 
 // CreateSession creates a new detached session running the specified command
@@ -58,9 +62,9 @@ func (m *Manager) CreateSession(name, workingDir string, command []string) error
 	}
 
 	switch m.sessionType {
-	case SessionTypeTmux:
+	case TypeTmux:
 		return m.createTmuxSession(name, workingDir, command)
-	case SessionTypeScreen:
+	case TypeScreen:
 		return m.createScreenSession(name, workingDir, command)
 	default:
 		return fmt.Errorf("unsupported session type: %s", m.sessionType)
@@ -77,10 +81,11 @@ func (m *Manager) createTmuxSession(name, workingDir string, command []string) e
 	}
 	args = append(args, command...)
 
-	cmd := exec.Command("tmux", args...)
+	cmd := exec.CommandContext(context.Background(), "tmux", args...)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to create tmux session: %w", err)
 	}
+
 	return nil
 }
 
@@ -92,10 +97,11 @@ func (m *Manager) createScreenSession(name, workingDir string, command []string)
 		escapeShellArg(workingDir),
 		strings.Join(escapeShellArgs(command), " "))
 
-	cmd := exec.Command("screen", "-dmS", name, "bash", "-c", shellCmd)
+	cmd := exec.CommandContext(context.Background(), "screen", "-dmS", name, "bash", "-c", shellCmd)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to create screen session: %w", err)
 	}
+
 	return nil
 }
 
@@ -106,20 +112,23 @@ func (m *Manager) HasSession(name string) (bool, error) {
 	}
 
 	switch m.sessionType {
-	case SessionTypeTmux:
-		cmd := exec.Command("tmux", "has-session", "-t", name)
+	case TypeTmux:
+		cmd := exec.CommandContext(context.Background(), "tmux", "has-session", "-t", name)
 		return cmd.Run() == nil, nil
-	case SessionTypeScreen:
+	case TypeScreen:
 		// List sessions and check if name exists
-		cmd := exec.Command("screen", "-ls")
+		cmd := exec.CommandContext(context.Background(), "screen", "-ls")
 		output, err := cmd.Output()
+
 		if err != nil {
 			// screen -ls returns exit code 1 if no sessions exist
 			if len(output) > 0 {
 				return strings.Contains(string(output), name), nil
 			}
+
 			return false, nil
 		}
+
 		return strings.Contains(string(output), name), nil
 	default:
 		return false, nil
@@ -133,9 +142,9 @@ func (m *Manager) ListSessions() ([]string, error) {
 	}
 
 	switch m.sessionType {
-	case SessionTypeTmux:
+	case TypeTmux:
 		return m.listTmuxSessions()
-	case SessionTypeScreen:
+	case TypeScreen:
 		return m.listScreenSessions()
 	default:
 		return []string{}, nil
@@ -144,21 +153,24 @@ func (m *Manager) ListSessions() ([]string, error) {
 
 // listTmuxSessions lists all tmux sessions
 func (m *Manager) listTmuxSessions() ([]string, error) {
-	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
+	cmd := exec.CommandContext(context.Background(), "tmux", "list-sessions", "-F", "#{session_name}")
 	output, err := cmd.Output()
+
 	if err != nil {
 		// No sessions exist
 		return []string{}, nil
 	}
 
 	sessions := strings.Split(strings.TrimSpace(string(output)), "\n")
+
 	return sessions, nil
 }
 
 // listScreenSessions lists all screen sessions
 func (m *Manager) listScreenSessions() ([]string, error) {
-	cmd := exec.Command("screen", "-ls")
+	cmd := exec.CommandContext(context.Background(), "screen", "-ls")
 	output, err := cmd.Output()
+
 	if err != nil && len(output) == 0 {
 		// No sessions exist
 		return []string{}, nil
@@ -168,6 +180,7 @@ func (m *Manager) listScreenSessions() ([]string, error) {
 	// Format: "12345.session-name	(Detached)"
 	var sessions []string
 	lines := strings.Split(string(output), "\n")
+
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if strings.Contains(line, "(Detached)") || strings.Contains(line, "(Attached)") {
@@ -182,6 +195,7 @@ func (m *Manager) listScreenSessions() ([]string, error) {
 			}
 		}
 	}
+
 	return sessions, nil
 }
 
@@ -192,25 +206,33 @@ func (m *Manager) KillSession(name string) error {
 	}
 
 	switch m.sessionType {
-	case SessionTypeTmux:
-		cmd := exec.Command("tmux", "kill-session", "-t", name)
+	case TypeTmux:
+		cmd := exec.CommandContext(context.Background(), "tmux", "kill-session", "-t", name)
 		return cmd.Run()
-	case SessionTypeScreen:
+	case TypeScreen:
 		// screen requires the full session name with PID prefix
 		// We need to find it first
-		cmd := exec.Command("screen", "-ls")
-		output, _ := cmd.Output()
+		cmd := exec.CommandContext(context.Background(), "screen", "-ls")
+		output, err := cmd.Output()
+
+		if err != nil {
+			return fmt.Errorf("failed to list screen sessions: %w", err)
+		}
+
 		lines := strings.Split(string(output), "\n")
+
 		for _, line := range lines {
 			if strings.Contains(line, name) {
 				parts := strings.Fields(line)
 				if len(parts) > 0 {
 					sessionFull := parts[0]
-					killCmd := exec.Command("screen", "-S", sessionFull, "-X", "quit")
+					killCmd := exec.CommandContext(context.Background(), "screen", "-S", sessionFull, "-X", "quit")
+
 					return killCmd.Run()
 				}
 			}
 		}
+
 		return fmt.Errorf("session not found: %s", name)
 	default:
 		return fmt.Errorf("unsupported session type: %s", m.sessionType)
@@ -228,16 +250,18 @@ func (m *Manager) AttachToSession(name string) error {
 	if err != nil {
 		return fmt.Errorf("failed to check session: %w", err)
 	}
+
 	if !exists {
 		return fmt.Errorf("session not found: %s", name)
 	}
 
 	// Build attach command
 	var attachCmd string
+
 	switch m.sessionType {
-	case SessionTypeTmux:
+	case TypeTmux:
 		attachCmd = fmt.Sprintf("tmux attach -t %s", name)
-	case SessionTypeScreen:
+	case TypeScreen:
 		attachCmd = fmt.Sprintf("screen -r %s", name)
 	default:
 		return fmt.Errorf("unsupported session type: %s", m.sessionType)
@@ -261,6 +285,7 @@ func openTerminalWindow(command string) error {
 		if err := openITermWindow(command); err != nil {
 			return openTerminalAppWindow(command)
 		}
+
 		return nil
 	}
 }
@@ -276,10 +301,11 @@ func openITermWindow(command string) error {
 		end tell
 	`, escapeAppleScript(command))
 
-	cmd := exec.Command("osascript", "-e", script)
+	cmd := exec.CommandContext(context.Background(), "osascript", "-e", script)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to open iTerm window: %w", err)
 	}
+
 	return nil
 }
 
@@ -292,10 +318,11 @@ func openTerminalAppWindow(command string) error {
 		end tell
 	`, escapeAppleScript(command))
 
-	cmd := exec.Command("osascript", "-e", script)
+	cmd := exec.CommandContext(context.Background(), "osascript", "-e", script)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to open Terminal window: %w", err)
 	}
+
 	return nil
 }
 
@@ -308,7 +335,6 @@ func GenerateSessionName(branchName string) string {
 	name = strings.ReplaceAll(name, "/", "-")
 	name = strings.ReplaceAll(name, " ", "-")
 
-	// Prefix with auto-worktree
 	return "auto-worktree-" + name
 }
 
@@ -327,9 +353,11 @@ func escapeShellArg(arg string) string {
 // escapeShellArgs escapes multiple shell arguments
 func escapeShellArgs(args []string) []string {
 	escaped := make([]string, len(args))
+
 	for i, arg := range args {
 		escaped[i] = escapeShellArg(arg)
 	}
+
 	return escaped
 }
 
@@ -337,5 +365,6 @@ func escapeShellArgs(args []string) []string {
 func escapeAppleScript(s string) string {
 	s = strings.ReplaceAll(s, "\\", "\\\\")
 	s = strings.ReplaceAll(s, "\"", "\\\"")
+
 	return s
 }

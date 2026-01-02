@@ -1,6 +1,8 @@
+// Package environment handles environment setup for worktrees (dependency installation)
 package environment
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -25,26 +27,31 @@ func (s *Setup) Run() error {
 	// Try each project type
 	if s.detectGoProject() {
 		detected = true
+
 		s.installGoModules()
 	}
 
 	if s.detectNodeProject() {
 		detected = true
+
 		s.installNodeModules()
 	}
 
 	if s.detectPythonProject() {
 		detected = true
+
 		s.installPythonDeps()
 	}
 
 	if s.detectRubyProject() {
 		detected = true
+
 		s.installRubyGems()
 	}
 
 	if s.detectRustProject() {
 		detected = true
+
 		s.buildRustProject()
 	}
 
@@ -70,7 +77,7 @@ func (s *Setup) installGoModules() {
 	fmt.Println("\nDetected Go project (go.mod)")
 	fmt.Println("Running go mod download...")
 
-	cmd := exec.Command("go", "mod", "download")
+	cmd := exec.CommandContext(context.Background(), "go", "mod", "download")
 	cmd.Dir = s.worktreePath
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -110,12 +117,15 @@ func (s *Setup) detectNodePackageManager() string {
 	if fileExists(filepath.Join(s.worktreePath, "bun.lockb")) {
 		return "bun"
 	}
+
 	if fileExists(filepath.Join(s.worktreePath, "pnpm-lock.yaml")) {
 		return "pnpm"
 	}
+
 	if fileExists(filepath.Join(s.worktreePath, "yarn.lock")) {
 		return "yarn"
 	}
+
 	return "npm"
 }
 
@@ -127,7 +137,7 @@ func (s *Setup) runNodeInstall(manager string, args []string) {
 
 	fmt.Printf("Running %s install...\n", manager)
 
-	cmd := exec.Command(manager, args...)
+	cmd := exec.CommandContext(context.Background(), manager, args...)
 	cmd.Dir = s.worktreePath
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -168,18 +178,30 @@ func (s *Setup) detectUvProject() bool {
 	if !commandExists("uv") {
 		return false
 	}
+
 	// Check for uv.lock
 	if fileExists(filepath.Join(s.worktreePath, "uv.lock")) {
 		return true
 	}
+
 	// Check for [tool.uv] in pyproject.toml
 	pyproject := filepath.Join(s.worktreePath, "pyproject.toml")
 	if fileExists(pyproject) {
-		content, err := os.ReadFile(pyproject)
+		// Clean the path and ensure it's within the worktree to prevent path traversal
+		cleanPath := filepath.Clean(pyproject)
+		cleanWorktree := filepath.Clean(s.worktreePath)
+
+		if !strings.HasPrefix(cleanPath, cleanWorktree) {
+			return false
+		}
+
+		content, err := os.ReadFile(cleanPath)
+
 		if err == nil && strings.Contains(string(content), "[tool.uv]") {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -187,7 +209,7 @@ func (s *Setup) runUvSync() {
 	fmt.Println("\nDetected Python project (uv)")
 	fmt.Println("Running uv sync...")
 
-	cmd := exec.Command("uv", "sync")
+	cmd := exec.CommandContext(context.Background(), "uv", "sync")
 	cmd.Dir = s.worktreePath
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -203,7 +225,7 @@ func (s *Setup) runPoetryInstall() {
 	fmt.Println("\nDetected Python project (pyproject.toml)")
 	fmt.Println("Running poetry install...")
 
-	cmd := exec.Command("poetry", "install", "--quiet")
+	cmd := exec.CommandContext(context.Background(), "poetry", "install", "--quiet")
 	cmd.Dir = s.worktreePath
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -228,7 +250,7 @@ func (s *Setup) runPipInstall() {
 
 	fmt.Println("Installing Python dependencies...")
 
-	cmd := exec.Command(pipCmd, "install", "-q", "-r", "requirements.txt")
+	cmd := exec.CommandContext(context.Background(), pipCmd, "install", "-q", "-r", "requirements.txt")
 	cmd.Dir = s.worktreePath
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -254,7 +276,7 @@ func (s *Setup) installRubyGems() {
 	fmt.Println("\nDetected Ruby project (Gemfile)")
 	fmt.Println("Running bundle install...")
 
-	cmd := exec.Command("bundle", "install", "--quiet")
+	cmd := exec.CommandContext(context.Background(), "bundle", "install", "--quiet")
 	cmd.Dir = s.worktreePath
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -280,7 +302,7 @@ func (s *Setup) buildRustProject() {
 	fmt.Println("\nDetected Rust project (Cargo.toml)")
 	fmt.Println("Running cargo check...")
 
-	cmd := exec.Command("cargo", "check", "--quiet")
+	cmd := exec.CommandContext(context.Background(), "cargo", "check", "--quiet")
 	cmd.Dir = s.worktreePath
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
