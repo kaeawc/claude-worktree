@@ -56,7 +56,7 @@ func runCommand(command string) error {
 		return cmd.RunCleanup()
 
 	case "settings":
-		return cmd.RunSettings()
+		return runSettingsCommand()
 
 	case "remove", "rm":
 		return runRemoveCommand()
@@ -99,6 +99,60 @@ func runRemoveCommand() error {
 	}
 
 	return cmd.RunRemove(os.Args[2])
+}
+
+func runSettingsCommand() error {
+	// If no subcommand, run interactive mode
+	if len(os.Args) < 3 {
+		return cmd.RunSettings()
+	}
+
+	subcommand := os.Args[2]
+
+	switch subcommand {
+	case "set":
+		if len(os.Args) < 5 {
+			fmt.Fprintf(os.Stderr, "Error: key and value required\n")
+			fmt.Fprintf(os.Stderr, "Usage: auto-worktree settings set <key> <value> [--global]\n")
+			os.Exit(1)
+		}
+		key := os.Args[3]
+		value := os.Args[4]
+		scope := "local"
+		if len(os.Args) > 5 && os.Args[5] == "--global" {
+			scope = "global"
+		}
+		return cmd.RunSettingsSet(key, value, scope)
+
+	case "get":
+		if len(os.Args) < 4 {
+			fmt.Fprintf(os.Stderr, "Error: key required\n")
+			fmt.Fprintf(os.Stderr, "Usage: auto-worktree settings get <key>\n")
+			os.Exit(1)
+		}
+		key := os.Args[3]
+		return cmd.RunSettingsGet(key)
+
+	case "list":
+		return cmd.RunSettingsList()
+
+	case "reset":
+		scope := "local"
+		if len(os.Args) > 3 && os.Args[3] == "--global" {
+			scope = "global"
+		}
+		return cmd.RunSettingsReset(scope)
+
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown settings subcommand: %s\n\n", subcommand)
+		fmt.Fprintf(os.Stderr, "Available subcommands:\n")
+		fmt.Fprintf(os.Stderr, "  set <key> <value> [--global]  Set a configuration value\n")
+		fmt.Fprintf(os.Stderr, "  get <key>                      Get a configuration value\n")
+		fmt.Fprintf(os.Stderr, "  list                           List all configuration values\n")
+		fmt.Fprintf(os.Stderr, "  reset [--global]               Reset all settings to defaults\n")
+		os.Exit(1)
+		return nil
+	}
 }
 
 func showHelp() {

@@ -562,90 +562,577 @@ func cleanupWorktree(repo *git.Repository, wt *git.Worktree, deleteBranch bool) 
 
 // RunSettings shows settings menu.
 func RunSettings() error {
-	// Show settings menu with provider and AI tool options
-	items := []ui.MenuItem{
-		ui.NewMenuItem("Issue Provider", "Select GitHub, GitLab, JIRA, or Linear", "provider"),
-		ui.NewMenuItem("AI Tool", "Configure AI coding assistant", "ai-tool"),
-		ui.NewMenuItem("Back", "Return to main menu", "back"),
-	}
-
-	menu := ui.NewMenu("Settings", items)
-	p := tea.NewProgram(menu)
-
-	m, err := p.Run()
+	// Initialize repository and config
+	repo, err := git.NewRepository()
 	if err != nil {
-		return fmt.Errorf("failed to run settings menu: %w", err)
+		return fmt.Errorf("error: %w", err)
 	}
 
-	finalModel, ok := m.(ui.MenuModel)
-	if !ok {
-		return fmt.Errorf("unexpected model type")
-	}
+	cfg := git.NewConfig(repo.RootPath)
 
-	choice := finalModel.Choice()
+	// Main settings loop
+	for {
+		settings, err := loadCurrentSettings(cfg)
+		if err != nil {
+			return fmt.Errorf("failed to load settings: %w", err)
+		}
 
-	switch choice {
-	case "provider":
-		return runProviderSelection()
-	case "ai-tool":
-		return runAIToolSelection()
-	case "back", "":
-		return nil
-	default:
-		return fmt.Errorf("unknown settings option: %s", choice)
+		menu := ui.NewSettingsMenuModel(settings)
+		p := tea.NewProgram(menu, tea.WithAltScreen())
+
+		model, err := p.Run()
+		if err != nil {
+			return fmt.Errorf("failed to run settings menu: %w", err)
+		}
+
+		m, ok := model.(*ui.SettingsMenuModel)
+		if !ok {
+			return fmt.Errorf("unexpected model type")
+		}
+
+		choice := m.GetChoice()
+		if choice == "" {
+			// User quit
+			return nil
+		}
+
+		// Handle special actions
+		if choice == "view-all" {
+			if err := showAllSettings(cfg); err != nil {
+				return err
+			}
+			continue
+		}
+
+		if choice == "reset" {
+			if err := resetSettings(cfg); err != nil {
+				return err
+			}
+			continue
+		}
+
+		// Handle setting edits
+		if strings.HasPrefix(choice, "edit:") {
+			key := strings.TrimPrefix(choice, "edit:")
+			if err := editSetting(cfg, key, settings); err != nil {
+				return err
+			}
+			continue
+		}
 	}
 }
 
-//nolint:dupl // Intentional duplication - generic solution would reduce readability
-func runProviderSelection() error {
-	providerMenu := ui.NewProviderMenuModel()
-	p := tea.NewProgram(providerMenu, tea.WithAltScreen())
-
-	model, err := p.Run()
-	if err != nil {
-		return fmt.Errorf("error running provider selection: %w", err)
+func loadCurrentSettings(cfg *git.Config) ([]ui.SettingItem, error) {
+	settings := []ui.SettingItem{
+		ui.NewSettingItem(
+			git.ConfigIssueProvider,
+			"Issue Provider",
+			"Select issue tracking system",
+			"select",
+			git.ValidIssueProviders,
+			cfg.GetWithDefault(git.ConfigIssueProvider, "", git.ConfigScopeAuto),
+		),
+		ui.NewSettingItem(
+			git.ConfigAITool,
+			"AI Tool",
+			"Select AI coding assistant",
+			"select",
+			git.ValidAITools,
+			cfg.GetWithDefault(git.ConfigAITool, "", git.ConfigScopeAuto),
+		),
+		ui.NewSettingItem(
+			git.ConfigIssueAutoselect,
+			"Issue Autoselect",
+			"Automatically select first issue in list",
+			"bool",
+			nil,
+			fmt.Sprintf("%t", cfg.GetIssueAutoselect()),
+		),
+		ui.NewSettingItem(
+			git.ConfigPRAutoselect,
+			"PR Autoselect",
+			"Automatically select first PR in list",
+			"bool",
+			nil,
+			fmt.Sprintf("%t", cfg.GetPRAutoselect()),
+		),
+		ui.NewSettingItem(
+			git.ConfigRunHooks,
+			"Run Hooks",
+			"Execute git hooks during operations",
+			"bool",
+			nil,
+			fmt.Sprintf("%t", cfg.GetRunHooks()),
+		),
+		ui.NewSettingItem(
+			git.ConfigFailOnHookError,
+			"Fail on Hook Error",
+			"Stop operation if a hook fails",
+			"bool",
+			nil,
+			fmt.Sprintf("%t", cfg.GetFailOnHookError()),
+		),
+		ui.NewSettingItem(
+			git.ConfigJiraServer,
+			"JIRA Server",
+			"JIRA server URL (e.g., https://company.atlassian.net)",
+			"string",
+			nil,
+			cfg.GetWithDefault(git.ConfigJiraServer, "", git.ConfigScopeAuto),
+		),
+		ui.NewSettingItem(
+			git.ConfigJiraProject,
+			"JIRA Project",
+			"JIRA project key (e.g., PROJ)",
+			"string",
+			nil,
+			cfg.GetWithDefault(git.ConfigJiraProject, "", git.ConfigScopeAuto),
+		),
+		ui.NewSettingItem(
+			git.ConfigGitLabServer,
+			"GitLab Server",
+			"GitLab server URL (e.g., https://gitlab.com)",
+			"string",
+			nil,
+			cfg.GetWithDefault(git.ConfigGitLabServer, "", git.ConfigScopeAuto),
+		),
+		ui.NewSettingItem(
+			git.ConfigGitLabProject,
+			"GitLab Project",
+			"GitLab project path (e.g., group/project)",
+			"string",
+			nil,
+			cfg.GetWithDefault(git.ConfigGitLabProject, "", git.ConfigScopeAuto),
+		),
+		ui.NewSettingItem(
+			git.ConfigLinearTeam,
+			"Linear Team",
+			"Linear team identifier",
+			"string",
+			nil,
+			cfg.GetWithDefault(git.ConfigLinearTeam, "", git.ConfigScopeAuto),
+		),
+		ui.NewSettingItem(
+			git.ConfigCustomHooks,
+			"Custom Hooks",
+			"Comma-separated list of custom hook names",
+			"string",
+			nil,
+			cfg.GetWithDefault(git.ConfigCustomHooks, "", git.ConfigScopeAuto),
+		),
+		ui.NewSettingItem(
+			git.ConfigIssueTemplatesDir,
+			"Issue Templates Directory",
+			"Directory containing issue templates",
+			"string",
+			nil,
+			cfg.GetWithDefault(git.ConfigIssueTemplatesDir, "", git.ConfigScopeAuto),
+		),
+		ui.NewSettingItem(
+			git.ConfigIssueTemplatesDisabled,
+			"Disable Issue Templates",
+			"Don't use issue templates",
+			"bool",
+			nil,
+			fmt.Sprintf("%t", cfg.GetBoolWithDefault(git.ConfigIssueTemplatesDisabled, false, git.ConfigScopeAuto)),
+		),
+		ui.NewSettingItem(
+			git.ConfigIssueTemplatesNoPrompt,
+			"No Template Prompt",
+			"Don't prompt for template selection",
+			"bool",
+			nil,
+			fmt.Sprintf("%t", cfg.GetBoolWithDefault(git.ConfigIssueTemplatesNoPrompt, false, git.ConfigScopeAuto)),
+		),
 	}
 
-	m, ok := model.(ui.ProviderMenuModel)
+	return settings, nil
+}
+
+func editSetting(cfg *git.Config, key string, settings []ui.SettingItem) error {
+	// Find the setting
+	var setting ui.SettingItem
+	found := false
+	for _, s := range settings {
+		if s.Key == key {
+			setting = s
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("setting not found: %s", key)
+	}
+
+	// Show editor
+	editor := ui.NewSettingEditor(setting)
+	p := tea.NewProgram(editor, tea.WithAltScreen())
+	model, err := p.Run()
+	if err != nil {
+		return fmt.Errorf("failed to run editor: %w", err)
+	}
+
+	editorModel, ok := model.(*ui.SettingEditorModel)
 	if !ok {
 		return fmt.Errorf("unexpected model type")
 	}
 
-	provider := m.GetChoice()
+	if editorModel.Err() != nil {
+		// User canceled
+		return nil
+	}
 
-	if provider != "" {
-		// TODO: Save to git config
-		fmt.Println("\n" + ui.SuccessStyle.Render(fmt.Sprintf("Provider set to: %s", provider)))
-		fmt.Println(ui.InfoStyle.Render("(Note: Provider integration coming soon)"))
+	newValue := editorModel.GetValue()
+	if newValue == "" && setting.ValueType != "string" {
+		// User canceled or didn't select anything
+		return nil
+	}
+
+	// Validate the value
+	if err := cfg.Validate(key, newValue); err != nil {
+		fmt.Println("\n" + ui.ErrorStyle.Render(fmt.Sprintf("Invalid value: %v", err)))
 		fmt.Println()
+		return nil
+	}
+
+	// Ask for scope
+	scopeSelector := ui.NewScopeSelector()
+	p = tea.NewProgram(scopeSelector, tea.WithAltScreen())
+	model, err = p.Run()
+	if err != nil {
+		return fmt.Errorf("failed to run scope selector: %w", err)
+	}
+
+	scopeModel, ok := model.(*ui.ScopeSelectorModel)
+	if !ok {
+		return fmt.Errorf("unexpected model type")
+	}
+
+	scope := scopeModel.GetScope()
+	if scope == "" {
+		// User canceled
+		return nil
+	}
+
+	// Convert scope string to ConfigScope
+	var configScope git.ConfigScope
+	switch scope {
+	case "local":
+		configScope = git.ConfigScopeLocal
+	case "global":
+		configScope = git.ConfigScopeGlobal
+	default:
+		return fmt.Errorf("invalid scope: %s", scope)
+	}
+
+	// Save the setting
+	if err := cfg.SetValidated(key, newValue, configScope); err != nil {
+		return fmt.Errorf("failed to save setting: %w", err)
+	}
+
+	fmt.Println("\n" + ui.SuccessStyle.Render(fmt.Sprintf("Setting saved: %s = %s (%s)",
+		strings.TrimPrefix(key, "auto-worktree."), newValue, scope)))
+	fmt.Println()
+
+	return nil
+}
+
+func showAllSettings(cfg *git.Config) error {
+	// Collect all local and global values
+	localValues := make(map[string]string)
+	globalValues := make(map[string]string)
+
+	allKeys := []string{
+		git.ConfigIssueProvider,
+		git.ConfigAITool,
+		git.ConfigIssueAutoselect,
+		git.ConfigPRAutoselect,
+		git.ConfigRunHooks,
+		git.ConfigFailOnHookError,
+		git.ConfigCustomHooks,
+		git.ConfigJiraServer,
+		git.ConfigJiraProject,
+		git.ConfigGitLabServer,
+		git.ConfigGitLabProject,
+		git.ConfigLinearTeam,
+		git.ConfigIssueTemplatesDir,
+		git.ConfigIssueTemplatesDisabled,
+		git.ConfigIssueTemplatesNoPrompt,
+		git.ConfigIssueTemplatesDetected,
+	}
+
+	for _, key := range allKeys {
+		if val, err := cfg.Get(key, git.ConfigScopeLocal); err == nil && val != "" {
+			localValues[key] = val
+		}
+		if val, err := cfg.Get(key, git.ConfigScopeGlobal); err == nil && val != "" {
+			globalValues[key] = val
+		}
+	}
+
+	viewer := ui.NewSettingsViewer(localValues, globalValues)
+	p := tea.NewProgram(viewer, tea.WithAltScreen())
+	_, err := p.Run()
+	return err
+}
+
+func resetSettings(cfg *git.Config) error {
+	// Confirm reset
+	confirm := ui.NewConfirmModel("Are you sure you want to reset ALL settings to defaults?\nThis will clear all auto-worktree configuration.")
+	p := tea.NewProgram(confirm, tea.WithAltScreen())
+	model, err := p.Run()
+	if err != nil {
+		return fmt.Errorf("failed to run confirmation: %w", err)
+	}
+
+	confirmModel, ok := model.(*ui.ConfirmModel)
+	if !ok {
+		return fmt.Errorf("unexpected model type")
+	}
+
+	if !confirmModel.GetChoice() {
+		return nil
+	}
+
+	// Ask for scope
+	scopeSelector := ui.NewScopeSelector()
+	p = tea.NewProgram(scopeSelector, tea.WithAltScreen())
+	model, err = p.Run()
+	if err != nil {
+		return fmt.Errorf("failed to run scope selector: %w", err)
+	}
+
+	scopeModel, ok := model.(*ui.ScopeSelectorModel)
+	if !ok {
+		return fmt.Errorf("unexpected model type")
+	}
+
+	scope := scopeModel.GetScope()
+	if scope == "" {
+		return nil
+	}
+
+	var configScope git.ConfigScope
+	switch scope {
+	case "local":
+		configScope = git.ConfigScopeLocal
+	case "global":
+		configScope = git.ConfigScopeGlobal
+	default:
+		return fmt.Errorf("invalid scope: %s", scope)
+	}
+
+	// Reset all settings
+	if err := cfg.UnsetAll(configScope); err != nil {
+		return fmt.Errorf("failed to reset settings: %w", err)
+	}
+
+	fmt.Println("\n" + ui.SuccessStyle.Render(fmt.Sprintf("All settings reset (%s)", scope)))
+	fmt.Println()
+
+	return nil
+}
+
+// RunSettingsSet sets a configuration value (non-interactive mode)
+func RunSettingsSet(key, value, scope string) error {
+	// Normalize key - add auto-worktree prefix if not present
+	if !strings.HasPrefix(key, "auto-worktree.") {
+		key = "auto-worktree." + key
+	}
+
+	// Initialize repository and config
+	repo, err := git.NewRepository()
+	if err != nil {
+		return fmt.Errorf("error: %w", err)
+	}
+
+	cfg := git.NewConfig(repo.RootPath)
+
+	// Validate the key is a known config key
+	validKeys := []string{
+		git.ConfigIssueProvider,
+		git.ConfigAITool,
+		git.ConfigIssueAutoselect,
+		git.ConfigPRAutoselect,
+		git.ConfigRunHooks,
+		git.ConfigFailOnHookError,
+		git.ConfigCustomHooks,
+		git.ConfigJiraServer,
+		git.ConfigJiraProject,
+		git.ConfigGitLabServer,
+		git.ConfigGitLabProject,
+		git.ConfigLinearTeam,
+		git.ConfigIssueTemplatesDir,
+		git.ConfigIssueTemplatesDisabled,
+		git.ConfigIssueTemplatesNoPrompt,
+		git.ConfigIssueTemplatesDetected,
+	}
+
+	isValidKey := false
+	for _, validKey := range validKeys {
+		if key == validKey {
+			isValidKey = true
+			break
+		}
+	}
+
+	if !isValidKey {
+		return fmt.Errorf("unknown configuration key: %s\nRun 'auto-worktree settings list' to see available keys", key)
+	}
+
+	// Validate the value
+	if err := cfg.Validate(key, value); err != nil {
+		return fmt.Errorf("invalid value: %w", err)
+	}
+
+	// Convert scope
+	var configScope git.ConfigScope
+	switch scope {
+	case "local":
+		configScope = git.ConfigScopeLocal
+	case "global":
+		configScope = git.ConfigScopeGlobal
+	default:
+		return fmt.Errorf("invalid scope: %s (must be 'local' or 'global')", scope)
+	}
+
+	// Set the value
+	if err := cfg.SetValidated(key, value, configScope); err != nil {
+		return fmt.Errorf("failed to set configuration: %w", err)
+	}
+
+	fmt.Println(ui.SuccessStyle.Render(fmt.Sprintf("✓ Set %s = %s (%s)",
+		strings.TrimPrefix(key, "auto-worktree."), value, scope)))
+
+	return nil
+}
+
+// RunSettingsGet gets a configuration value (non-interactive mode)
+func RunSettingsGet(key string) error {
+	// Normalize key
+	if !strings.HasPrefix(key, "auto-worktree.") {
+		key = "auto-worktree." + key
+	}
+
+	// Initialize repository and config
+	repo, err := git.NewRepository()
+	if err != nil {
+		return fmt.Errorf("error: %w", err)
+	}
+
+	cfg := git.NewConfig(repo.RootPath)
+
+	// Get the value
+	value, err := cfg.Get(key, git.ConfigScopeAuto)
+	if err != nil {
+		return fmt.Errorf("failed to get configuration: %w", err)
+	}
+
+	if value == "" {
+		fmt.Println(ui.SubtleStyle.Render("(not set)"))
+	} else {
+		fmt.Println(value)
 	}
 
 	return nil
 }
 
-//nolint:dupl // Intentional duplication - generic solution would reduce readability
-func runAIToolSelection() error {
-	aiToolMenu := ui.NewAIToolMenuModel()
-	p := tea.NewProgram(aiToolMenu, tea.WithAltScreen())
-
-	model, err := p.Run()
+// RunSettingsList lists all configuration values (non-interactive mode)
+func RunSettingsList() error {
+	// Initialize repository and config
+	repo, err := git.NewRepository()
 	if err != nil {
-		return fmt.Errorf("error running AI tool selection: %w", err)
+		return fmt.Errorf("error: %w", err)
 	}
 
-	m, ok := model.(ui.AIToolMenuModel)
-	if !ok {
-		return fmt.Errorf("unexpected model type")
+	cfg := git.NewConfig(repo.RootPath)
+
+	// Use the existing showAllSettings function but in a simpler format
+	allKeys := []string{
+		git.ConfigIssueProvider,
+		git.ConfigAITool,
+		git.ConfigIssueAutoselect,
+		git.ConfigPRAutoselect,
+		git.ConfigRunHooks,
+		git.ConfigFailOnHookError,
+		git.ConfigCustomHooks,
+		git.ConfigJiraServer,
+		git.ConfigJiraProject,
+		git.ConfigGitLabServer,
+		git.ConfigGitLabProject,
+		git.ConfigLinearTeam,
+		git.ConfigIssueTemplatesDir,
+		git.ConfigIssueTemplatesDisabled,
+		git.ConfigIssueTemplatesNoPrompt,
+		git.ConfigIssueTemplatesDetected,
 	}
 
-	tool := m.GetChoice()
+	fmt.Println(ui.TitleStyle.Render("Configuration Settings"))
+	fmt.Println()
 
-	if tool != "" {
-		// TODO: Save to git config
-		fmt.Println("\n" + ui.SuccessStyle.Render(fmt.Sprintf("AI tool set to: %s", tool)))
-		fmt.Println(ui.InfoStyle.Render("(Note: AI tool integration coming soon)"))
-		fmt.Println()
+	for _, key := range allKeys {
+		shortKey := strings.TrimPrefix(key, "auto-worktree.")
+		localVal, _ := cfg.Get(key, git.ConfigScopeLocal)
+		globalVal, _ := cfg.Get(key, git.ConfigScopeGlobal)
+
+		if localVal != "" {
+			fmt.Printf("  %s %s %s\n",
+				ui.BoldStyle.Render(shortKey),
+				ui.SubtleStyle.Render("[local]"),
+				ui.SuccessStyle.Render(localVal))
+		}
+
+		if globalVal != "" && globalVal != localVal {
+			fmt.Printf("  %s %s %s\n",
+				ui.BoldStyle.Render(shortKey),
+				ui.SubtleStyle.Render("[global]"),
+				ui.InfoStyle.Render(globalVal))
+		}
 	}
+
+	fmt.Println()
+	return nil
+}
+
+// RunSettingsReset resets configuration (non-interactive mode)
+func RunSettingsReset(scope string) error {
+	// Initialize repository and config
+	repo, err := git.NewRepository()
+	if err != nil {
+		return fmt.Errorf("error: %w", err)
+	}
+
+	cfg := git.NewConfig(repo.RootPath)
+
+	// Convert scope
+	var configScope git.ConfigScope
+	switch scope {
+	case "local":
+		configScope = git.ConfigScopeLocal
+	case "global":
+		configScope = git.ConfigScopeGlobal
+	default:
+		return fmt.Errorf("invalid scope: %s (must be 'local' or 'global')", scope)
+	}
+
+	// Confirm with user
+	fmt.Printf("%s\n", ui.WarningStyle.Render(fmt.Sprintf("This will reset ALL %s auto-worktree settings.", scope)))
+	fmt.Print("Are you sure? (y/N): ")
+
+	var response string
+	fmt.Scanln(&response)
+
+	if strings.ToLower(response) != "y" && strings.ToLower(response) != "yes" {
+		fmt.Println(ui.SubtleStyle.Render("Canceled"))
+		return nil
+	}
+
+	// Reset
+	if err := cfg.UnsetAll(configScope); err != nil {
+		return fmt.Errorf("failed to reset settings: %w", err)
+	}
+
+	fmt.Println(ui.SuccessStyle.Render(fmt.Sprintf("✓ All %s settings reset", scope)))
 
 	return nil
 }
