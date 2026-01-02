@@ -321,12 +321,15 @@ func TestHookManager_ExecuteWorktreeHooks(t *testing.T) {
 			fakeHook := NewFakeHookExecutor()
 			fakeHook.IsExecutableFunc = func(path string) bool {
 				for _, hookPath := range tt.executableHooks {
+					// Normalize hook path for cross-platform comparison
+					normalizedHook := filepath.FromSlash(hookPath)
+
 					// Check exact match or with Windows extensions
-					if path == hookPath ||
-						path == hookPath+".bat" ||
-						path == hookPath+".cmd" ||
-						path == hookPath+".exe" ||
-						path == hookPath+".ps1" {
+					if path == normalizedHook ||
+						path == normalizedHook+".bat" ||
+						path == normalizedHook+".cmd" ||
+						path == normalizedHook+".exe" ||
+						path == normalizedHook+".ps1" {
 						return true
 					}
 				}
