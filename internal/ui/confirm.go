@@ -21,14 +21,15 @@ func NewConfirmModel(prompt string) *ConfirmModel {
 	}
 }
 
+// Init initializes the confirmation dialog.
 func (m ConfirmModel) Init() tea.Cmd {
 	return nil
 }
 
+// Update handles user input for the confirmation dialog.
 func (m ConfirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		switch keyMsg.String() {
 		case "ctrl+c", "q", "esc":
 			m.quitting = true
 			m.choice = false
@@ -62,6 +63,7 @@ func (m ConfirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// View renders the confirmation dialog.
 func (m ConfirmModel) View() string {
 	if m.quitting {
 		return ""

@@ -6,10 +6,10 @@ import "github.com/charmbracelet/lipgloss"
 // Updated to use gum color scheme (ANSI 1-6) from theme.go
 var (
 	// Color palette - using gum color scheme
-	primaryColor = ColorCyan   // Cyan for highlights/primary actions
-	successColor = ColorGreen  // Green for success
-	errorColor   = ColorRed    // Red for errors
-	warningColor = ColorYellow // Yellow for warnings
+	primaryColor = ColorCyan             // Cyan for highlights/primary actions
+	successColor = ColorGreen            // Green for success
+	errorColor   = ColorRed              // Red for errors
+	warningColor = ColorYellow           // Yellow for warnings
 	subtleColor  = lipgloss.Color("241") // Gray for subtle text
 
 	// Text styles

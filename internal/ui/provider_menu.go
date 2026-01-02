@@ -8,6 +8,7 @@ import (
 // Provider represents an issue tracking provider
 type Provider string
 
+// Provider constants for different issue tracking systems
 const (
 	ProviderNone   Provider = ""
 	ProviderGitHub Provider = "github"
@@ -23,8 +24,13 @@ type ProviderItem struct {
 	provider    Provider
 }
 
-func (i ProviderItem) Title() string       { return i.title }
+// Title returns the title of the provider item for display.
+func (i ProviderItem) Title() string { return i.title }
+
+// Description returns the description of the provider item.
 func (i ProviderItem) Description() string { return i.description }
+
+// FilterValue returns the value used for filtering this item.
 func (i ProviderItem) FilterValue() string { return i.title }
 
 // ProviderMenuModel represents the provider selection menu
@@ -77,10 +83,12 @@ func NewProviderMenuModel() *ProviderMenuModel {
 	}
 }
 
+// Init initializes the provider menu model.
 func (m ProviderMenuModel) Init() tea.Cmd {
 	return nil
 }
 
+// Update handles user input for the provider menu.
 func (m ProviderMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -108,6 +116,7 @@ func (m ProviderMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// View renders the provider menu.
 func (m ProviderMenuModel) View() string {
 	if m.quitting {
 		return ""
@@ -123,6 +132,7 @@ func (m ProviderMenuModel) GetChoice() Provider {
 // AITool represents an AI coding assistant tool
 type AITool string
 
+// AITool constants for different AI coding assistants
 const (
 	AIToolNone   AITool = ""
 	AIToolClaude AITool = "claude"
@@ -138,8 +148,13 @@ type AIToolItem struct {
 	tool        AITool
 }
 
-func (i AIToolItem) Title() string       { return i.title }
+// Title returns the title of the AI tool item for display.
+func (i AIToolItem) Title() string { return i.title }
+
+// Description returns the description of the AI tool item.
 func (i AIToolItem) Description() string { return i.description }
+
+// FilterValue returns the value used for filtering this item.
 func (i AIToolItem) FilterValue() string { return i.title }
 
 // AIToolMenuModel represents the AI tool selection menu
@@ -192,10 +207,12 @@ func NewAIToolMenuModel() *AIToolMenuModel {
 	}
 }
 
+// Init initializes the AI tool menu model.
 func (m AIToolMenuModel) Init() tea.Cmd {
 	return nil
 }
 
+// Update handles user input for the AI tool menu.
 func (m AIToolMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -223,6 +240,7 @@ func (m AIToolMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// View renders the AI tool menu.
 func (m AIToolMenuModel) View() string {
 	if m.quitting {
 		return ""
