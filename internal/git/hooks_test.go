@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -160,14 +161,16 @@ func TestHookManager_FindHookDirectories(t *testing.T) {
 					continue
 				}
 				found := false
+				// Normalize paths for cross-platform comparison
+				expectedNorm := filepath.FromSlash(expected)
 				for _, dir := range dirs {
-					if dir == expected {
+					if dir == expectedNorm {
 						found = true
 						break
 					}
 				}
 				if !found {
-					t.Errorf("Expected directory %s not found in result: %v", expected, dirs)
+					t.Errorf("Expected directory %s not found in result: %v", expectedNorm, dirs)
 				}
 			}
 		})
@@ -348,15 +351,27 @@ func TestHookManager_ExecuteWorktreeHooks(t *testing.T) {
 				if i >= len(fakeHook.ExecutedHooks) {
 					break
 				}
-				if fakeHook.ExecutedHooks[i].Path != expectedPath {
-					t.Errorf("Hook %d: expected path %s, got %s", i, expectedPath, fakeHook.ExecutedHooks[i].Path)
+				// Normalize expected path for cross-platform comparison
+				expectedNorm := filepath.FromSlash(expectedPath)
+				actualPath := fakeHook.ExecutedHooks[i].Path
+
+				// Check if path matches (with or without Windows extensions)
+				pathMatches := actualPath == expectedNorm ||
+					actualPath == expectedNorm+".bat" ||
+					actualPath == expectedNorm+".cmd" ||
+					actualPath == expectedNorm+".exe" ||
+					actualPath == expectedNorm+".ps1"
+
+				if !pathMatches {
+					t.Errorf("Hook %d: expected path %s, got %s", i, expectedNorm, actualPath)
 				}
 			}
 
 			// Verify post-checkout hook has correct parameters
 			if tt.runHooks && len(fakeHook.ExecutedHooks) > 0 {
 				firstHook := fakeHook.ExecutedHooks[0]
-				if strings.HasSuffix(firstHook.Path, "post-checkout") {
+				// Check for post-checkout in path (handles both Unix and Windows with extensions)
+				if strings.Contains(firstHook.Path, "post-checkout") {
 					expectedParams := []string{
 						"0000000000000000000000000000000000000000",
 						"abc123def456",
