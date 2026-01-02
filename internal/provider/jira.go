@@ -47,6 +47,7 @@ func (j *JiraProvider) GetIssueStatus(issueID string) (bool, bool, error) {
 				return false, false, ErrNotFound
 			}
 		}
+
 		return false, false, fmt.Errorf("failed to get JIRA issue status: %w", err)
 	}
 

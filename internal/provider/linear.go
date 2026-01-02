@@ -25,6 +25,7 @@ func (l *LinearProvider) Name() string {
 func (l *LinearProvider) IsAvailable() bool {
 	cmd := exec.Command("linear", "--version")
 	err := cmd.Run()
+
 	return err == nil
 }
 
@@ -44,6 +45,7 @@ func (l *LinearProvider) GetIssueStatus(issueID string) (bool, bool, error) {
 				return false, false, ErrNotFound
 			}
 		}
+
 		return false, false, fmt.Errorf("failed to get Linear issue status: %w", err)
 	}
 

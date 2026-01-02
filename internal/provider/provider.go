@@ -65,9 +65,11 @@ func ParseBranchName(branchName string) (providerType, id string, found bool) {
 	if id, found := extractNumericID(branchName, BranchPrefixWork, 5); found {
 		return ProviderTypeGitHubIssue, id, true
 	}
+
 	if id, found := extractNumericID(branchName, BranchPrefixPR, 3); found {
 		return ProviderTypeGitHubPR, id, true
 	}
+
 	if id, found := extractNumericID(branchName, BranchPrefixMR, 3); found {
 		return ProviderTypeGitLabMR, id, true
 	}
@@ -76,6 +78,7 @@ func ParseBranchName(branchName string) (providerType, id string, found bool) {
 	if id, found := extractProjectID(branchName, BranchPrefixIssue, 6); found {
 		return ProviderTypeJira, id, true
 	}
+
 	if id, found := extractProjectID(branchName, BranchPrefixWork, 5); found {
 		// Could be JIRA or Linear - for now assume JIRA if uppercase
 		return ProviderTypeJira, id, true
