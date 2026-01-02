@@ -17,10 +17,10 @@ var (
 
 // RepositoryInfo contains detected repository information
 type RepositoryInfo struct {
-	Owner string // Group/owner (may include nested groups like "group/subgroup")
+	Owner   string // Group/owner (may include nested groups like "group/subgroup")
 	Project string // Project name
-	Host  string // GitLab host (e.g., "gitlab.com" or "gitlab.example.com")
-	URL   string // Remote URL
+	Host    string // GitLab host (e.g., "gitlab.com" or "gitlab.example.com")
+	URL     string // Remote URL
 }
 
 // DetectRepository auto-detects GitLab owner/project/host from git remote

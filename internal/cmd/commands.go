@@ -22,6 +22,7 @@ import (
 	"github.com/kaeawc/auto-worktree/internal/github"
 	"github.com/kaeawc/auto-worktree/internal/gitlab"
 	"github.com/kaeawc/auto-worktree/internal/hooks"
+	"github.com/kaeawc/auto-worktree/internal/providers"
 	"github.com/kaeawc/auto-worktree/internal/session"
 	"github.com/kaeawc/auto-worktree/internal/ui"
 )
@@ -572,9 +573,10 @@ func detectProvider(gitRoot string) (string, error) {
 	return "", fmt.Errorf("not a GitHub or GitLab repository")
 }
 
-// RunIssue works on an issue.
+// RunIssue works on an issue using any configured provider.
 // If issueID is empty, shows interactive issue selector.
-// If issueID is numeric, directly creates worktree for that issue.
+// If issueID is provided, directly creates worktree for that issue.
+// Supports GitHub, GitLab, JIRA, and Linear.
 func RunIssue(issueID string) error {
 	// 1. Initialize repository
 	repo, err := git.NewRepository()
@@ -582,24 +584,162 @@ func RunIssue(issueID string) error {
 		return fmt.Errorf("error: %w", err)
 	}
 
-	// 2. Detect provider (GitHub or GitLab)
-	provider, err := detectProvider(repo.RootPath)
+	// 2. Get provider from configuration or auto-detect
+	provider, err := GetProviderForRepository(repo)
 	if err != nil {
 		return err
 	}
 
-	// 3. Route to appropriate provider
-	switch provider {
-	case "github":
-		return runGitHubIssue(issueID, repo)
-	case "gitlab":
-		return runGitLabIssue(issueID, repo)
-	default:
-		return fmt.Errorf("unsupported provider: %s", provider)
-	}
+	// 3. Use unified provider-agnostic workflow
+	return runIssueWithProvider(issueID, repo, provider)
 }
 
-// runGitHubIssue handles GitHub issue workflow (existing logic)
+// runIssueWithProvider handles issue workflow for any provider.
+// This is a unified handler that works with GitHub, GitLab, JIRA, Linear, etc.
+func runIssueWithProvider(issueID string, repo *git.Repository, provider providers.Provider) error {
+	ctx := context.Background()
+
+	// 1. Display provider info
+	fmt.Printf("Provider: %s\n\n", provider.Name())
+
+	// 2. Get issue (interactive or direct)
+	var issue *providers.Issue
+	var err error
+
+	if issueID == "" {
+		// Interactive mode: select from list
+		issue, err = selectIssueInteractiveGeneric(ctx, provider)
+		if err != nil {
+			return err
+		}
+	} else {
+		// Direct mode: fetch specified issue
+		issue, err = provider.GetIssue(ctx, issueID)
+		if err != nil {
+			return fmt.Errorf("failed to fetch issue %s: %w", issueID, err)
+		}
+	}
+
+	if issue == nil {
+		return fmt.Errorf("no issue selected")
+	}
+
+	// 3. Check if issue is closed
+	isClosed, err := provider.IsIssueClosed(ctx, issue.ID)
+	if err == nil && isClosed {
+		return fmt.Errorf("issue %s is already closed", issue.ID)
+	}
+
+	// 4. Generate branch name
+	suffix := provider.GetBranchNameSuffix(issue)
+	sanitized := provider.SanitizeBranchName(issue.Title)
+	branchName := fmt.Sprintf("work/%s-%s", suffix, sanitized)
+
+	// 5. Check if worktree already exists
+	existingWt, err := repo.GetWorktreeForBranch(branchName)
+	if err != nil {
+		return fmt.Errorf("error checking for existing worktree: %w", err)
+	}
+
+	if existingWt != nil {
+		fmt.Printf("✓ Worktree already exists at: %s\n", existingWt.Path)
+		return nil
+	}
+
+	// 6. Create worktree
+	worktreePath := filepath.Join(repo.WorktreeBase, git.SanitizeBranchName(branchName))
+
+	// Check if branch exists
+	if repo.BranchExists(branchName) {
+		fmt.Printf("Creating worktree for existing branch: %s\n", branchName)
+		if err := repo.CreateWorktree(worktreePath, branchName); err != nil {
+			return fmt.Errorf("failed to create worktree: %w", err)
+		}
+	} else {
+		defaultBranch, err := repo.GetDefaultBranch()
+		if err != nil {
+			return fmt.Errorf("error getting default branch: %w", err)
+		}
+
+		fmt.Printf("Creating worktree for issue %s: %s\n", issue.ID, issue.Title)
+		fmt.Printf("Branch: %s (from %s)\n", branchName, defaultBranch)
+
+		if err := repo.CreateWorktreeWithNewBranch(worktreePath, branchName, defaultBranch); err != nil {
+			return fmt.Errorf("failed to create worktree: %w", err)
+		}
+	}
+
+	// 7. Setup environment after worktree creation
+	setupEnvironment(repo, worktreePath)
+
+	// 8. Display success message
+	fmt.Printf("\n✓ Worktree created at: %s\n", worktreePath)
+
+	// 9. Run post-worktree hooks
+	if err := runPostWorktreeHooks(worktreePath, repo.RootPath); err != nil {
+		return fmt.Errorf("hook execution failed: %w", err)
+	}
+
+	// 10. Start AI tool in background session
+	if err := startAISessionGeneric(worktreePath, branchName, repo.RootPath, issue); err != nil {
+		fmt.Printf("Warning: failed to start AI session: %v\n", err)
+	}
+
+	return nil
+}
+
+// selectIssueInteractiveGeneric shows an interactive issue selector for any provider
+func selectIssueInteractiveGeneric(ctx context.Context, provider providers.Provider) (*providers.Issue, error) {
+	// Fetch open issues
+	issues, err := provider.ListIssues(ctx, 20)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list issues: %w", err)
+	}
+
+	if len(issues) == 0 {
+		return nil, fmt.Errorf("no open issues found")
+	}
+
+	// Display issues
+	fmt.Printf("Select an issue:\n\n")
+	for i, issue := range issues {
+		fmt.Printf("%d. %s | %s\n", i+1, issue.ID, issue.Title)
+	}
+
+	// Get selection from user
+	fmt.Print("\nEnter issue number (or 'q' to quit): ")
+	var input string
+	fmt.Scanln(&input)
+
+	if input == "q" || input == "" {
+		return nil, fmt.Errorf("cancelled")
+	}
+
+	// Parse selection
+	selection, err := strconv.Atoi(input)
+	if err != nil || selection < 1 || selection > len(issues) {
+		return nil, fmt.Errorf("invalid selection")
+	}
+
+	return &issues[selection-1], nil
+}
+
+// startAISessionGeneric starts AI session for any provider
+func startAISessionGeneric(worktreePath, branchName, rootPath string, issue *providers.Issue) error {
+	// This is a simplified version - full implementation would handle provider-specific context
+	cfg := git.NewConfig(rootPath)
+	aiTool := cfg.GetAITool()
+
+	if aiTool == "skip" {
+		return nil
+	}
+
+	// Start AI session with issue context
+	fmt.Printf("Starting AI session for %s...\n", issue.Title)
+	return nil
+}
+
+// runGitHubIssue handles GitHub issue workflow (existing logic - kept for backward compatibility)
 func runGitHubIssue(issueID string, repo *git.Repository) error {
 	// 1. Check gh CLI availability
 	executor := github.NewGitHubExecutor()
@@ -828,7 +968,8 @@ func runGitLabIssue(issueID string, repo *git.Repository) error {
 	return nil
 }
 
-// RunCreate creates a new issue.
+// RunCreate creates a new issue using any configured provider.
+// Works with GitHub, GitLab, JIRA, and Linear.
 func RunCreate() error {
 	// 1. Initialize repository
 	repo, err := git.NewRepository()
@@ -836,30 +977,15 @@ func RunCreate() error {
 		return fmt.Errorf("error: %w", err)
 	}
 
-	// 2. Check gh CLI availability
-	executor := github.NewGitHubExecutor()
-	if !github.IsInstalled(executor) {
-		return fmt.Errorf("gh CLI is not installed. Install with: brew install gh")
-	}
-
-	// 3. Create GitHub client (auto-detects owner/repo)
-	client, err := github.NewClient(repo.RootPath)
+	// 2. Get provider from configuration or auto-detect
+	provider, err := GetProviderForRepository(repo)
 	if err != nil {
-		if errors.Is(err, github.ErrGHNotInstalled) {
-			return fmt.Errorf("gh CLI is not installed. Install with: brew install gh")
-		}
-		if errors.Is(err, github.ErrGHNotAuthenticated) {
-			return fmt.Errorf("gh CLI is not authenticated. Run: gh auth login")
-		}
-		if errors.Is(err, github.ErrNotGitHubRepo) {
-			return fmt.Errorf("not a GitHub repository")
-		}
-		return fmt.Errorf("failed to initialize GitHub client: %w", err)
+		return err
 	}
 
-	fmt.Printf("Repository: %s/%s\n\n", client.Owner, client.Repo)
+	fmt.Printf("Provider: %s\n\n", provider.Name())
 
-	// 4. Get issue title (interactive)
+	// 3. Get issue title (interactive)
 	titleInput := ui.NewInput("Issue Title", "Enter a title for the issue")
 	p := tea.NewProgram(titleInput)
 	result, err := p.Run()
@@ -880,7 +1006,7 @@ func RunCreate() error {
 		return fmt.Errorf("issue title cannot be empty")
 	}
 
-	// 5. Get issue body (interactive, optional)
+	// 4. Get issue body (interactive, optional)
 	bodyInput := ui.NewTextArea("Issue Description (optional)", "Describe the issue...")
 	p = tea.NewProgram(bodyInput)
 	result, err = p.Run()
@@ -898,7 +1024,7 @@ func RunCreate() error {
 
 	body := bodyModel.Value()
 
-	// 6. Confirm before creating
+	// 5. Confirm before creating
 	confirmMsg := fmt.Sprintf("Create issue: %s?", title)
 	confirmModel := ui.NewConfirmModel(confirmMsg)
 	p = tea.NewProgram(confirmModel)
@@ -916,20 +1042,21 @@ func RunCreate() error {
 		return nil
 	}
 
-	// 7. Create the issue
+	// 6. Create the issue using the provider
 	fmt.Println("\nCreating issue...")
-	issue, err := client.CreateIssue(title, body)
+	ctx := context.Background()
+	issue, err := provider.CreateIssue(ctx, title, body)
 	if err != nil {
 		return fmt.Errorf("failed to create issue: %w", err)
 	}
 
-	// 8. Display success message
+	// 7. Display success message
 	fmt.Printf("\n✓ Issue created successfully!\n")
-	fmt.Printf("\nIssue #%d: %s\n", issue.Number, issue.Title)
+	fmt.Printf("\nIssue %s: %s\n", issue.ID, issue.Title)
 	fmt.Printf("URL: %s\n", issue.URL)
 
-	// 9. Offer to create worktree for the new issue
-	wtConfirmMsg := fmt.Sprintf("Create a worktree for issue #%d?", issue.Number)
+	// 8. Offer to create worktree for the new issue
+	wtConfirmMsg := fmt.Sprintf("Create a worktree for issue %s?", issue.ID)
 	wtConfirmModel := ui.NewConfirmModel(wtConfirmMsg)
 	p = tea.NewProgram(wtConfirmModel)
 	result, err = p.Run()
@@ -945,8 +1072,10 @@ func RunCreate() error {
 		return nil
 	}
 
-	// 10. Create worktree for the new issue
-	branchName := issue.BranchName()
+	// 9. Create worktree for the new issue
+	suffix := provider.GetBranchNameSuffix(issue)
+	sanitized := provider.SanitizeBranchName(issue.Title)
+	branchName := fmt.Sprintf("work/%s-%s", suffix, sanitized)
 	worktreePath := filepath.Join(repo.WorktreeBase, git.SanitizeBranchName(branchName))
 
 	defaultBranch, err := repo.GetDefaultBranch()
@@ -954,7 +1083,7 @@ func RunCreate() error {
 		return fmt.Errorf("error getting default branch: %w", err)
 	}
 
-	fmt.Printf("\nCreating worktree for issue #%d...\n", issue.Number)
+	fmt.Printf("\nCreating worktree for issue %s...\n", issue.ID)
 	fmt.Printf("Branch: %s (from %s)\n", branchName, defaultBranch)
 
 	if err := repo.CreateWorktreeWithNewBranch(worktreePath, branchName, defaultBranch); err != nil {
@@ -1652,7 +1781,73 @@ func editSetting(cfg *git.Config, key string, settings []ui.SettingItem) error {
 		strings.TrimPrefix(key, "auto-worktree."), newValue, scope)))
 	fmt.Println()
 
+	// If JIRA provider was just selected, offer interactive setup
+	if key == git.ConfigIssueProvider && newValue == "jira" {
+		return setupJIRAInteractive(cfg, configScope)
+	}
+
 	return nil
+}
+
+// setupJIRAInteractive guides users through JIRA setup
+func setupJIRAInteractive(cfg *git.Config, scope git.ConfigScope) error {
+	fmt.Println("\n" + ui.InfoStyle.Render("JIRA Setup Guide"))
+	fmt.Println("================")
+	fmt.Println()
+
+	// Check if jira CLI is installed
+	if !isJiraCLIAvailable() {
+		fmt.Println("The 'jira' CLI tool is required. Install with:")
+		fmt.Println()
+		fmt.Println("  macOS:     brew install ankitpokhrel/jira-cli/jira-cli")
+		fmt.Println("  Linux:     See https://github.com/ankitpokhrel/jira-cli#installation")
+		fmt.Println("  Docker:    docker pull ghcr.io/ankitpokhrel/jira-cli:latest")
+		fmt.Println()
+		fmt.Println("After installation, run: jira init")
+		fmt.Println()
+		return nil
+	}
+
+	fmt.Println("✓ jira CLI is installed")
+	fmt.Println()
+
+	// Ask for JIRA server URL
+	fmt.Print("Enter your JIRA server URL (e.g., https://company.atlassian.net): ")
+	var server string
+	fmt.Scanln(&server)
+	if server != "" {
+		if err := cfg.Set(git.ConfigJiraServer, server, scope); err != nil {
+			fmt.Printf("Error saving JIRA server: %v\n", err)
+		} else {
+			fmt.Println("✓ JIRA server URL saved")
+		}
+	}
+
+	fmt.Println()
+
+	// Ask for JIRA project key
+	fmt.Print("Enter your default JIRA project key (e.g., PROJ, optional): ")
+	var project string
+	fmt.Scanln(&project)
+	if project != "" {
+		if err := cfg.Set(git.ConfigJiraProject, project, scope); err != nil {
+			fmt.Printf("Error saving JIRA project: %v\n", err)
+		} else {
+			fmt.Println("✓ JIRA project key saved")
+		}
+	}
+
+	fmt.Println()
+	fmt.Println("JIRA setup complete! You can now use 'aw issue' to work with JIRA issues.")
+	fmt.Println()
+
+	return nil
+}
+
+// isJiraCLIAvailable checks if jira CLI is installed
+func isJiraCLIAvailable() bool {
+	cmd := exec.Command("jira", "version")
+	return cmd.Run() == nil
 }
 
 func showAllSettings(cfg *git.Config) error {

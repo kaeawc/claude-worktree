@@ -25,10 +25,10 @@ type Issue struct {
 		Creator struct {
 			DisplayName string `json:"displayName"`
 		} `json:"creator"`
-		Created string `json:"created"`
-		Updated string `json:"updated"`
+		Created string   `json:"created"`
+		Updated string   `json:"updated"`
 		Labels  []string `json:"labels"`
-		URL     string `json:"url"`
+		URL     string   `json:"url"`
 	} `json:"fields"`
 }
 

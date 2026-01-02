@@ -11,21 +11,21 @@ import (
 
 // MergeRequest represents a GitLab merge request
 type MergeRequest struct {
-	IID                int      `json:"iid"`
-	Title              string   `json:"title"`
-	Description        string   `json:"description"`
-	State              string   `json:"state"`          // "opened", "closed", "merged"
-	MergeStatus        string   `json:"merge_status"`   // "can_be_merged", "cannot_be_merged", etc.
-	Author             Author   `json:"author"`
-	SourceBranch       string   `json:"source_branch"`
-	TargetBranch       string   `json:"target_branch"`
-	Labels             []string `json:"labels"`
-	WebURL             string   `json:"web_url"`
-	CreatedAt          string   `json:"created_at"`
-	UpdatedAt          string   `json:"updated_at"`
-	WorkInProgress     bool     `json:"work_in_progress"` // GitLab's draft equivalent
-	ChangesCount       string   `json:"changes_count"`
-	UserNotesCount     int      `json:"user_notes_count"`
+	IID            int      `json:"iid"`
+	Title          string   `json:"title"`
+	Description    string   `json:"description"`
+	State          string   `json:"state"`        // "opened", "closed", "merged"
+	MergeStatus    string   `json:"merge_status"` // "can_be_merged", "cannot_be_merged", etc.
+	Author         Author   `json:"author"`
+	SourceBranch   string   `json:"source_branch"`
+	TargetBranch   string   `json:"target_branch"`
+	Labels         []string `json:"labels"`
+	WebURL         string   `json:"web_url"`
+	CreatedAt      string   `json:"created_at"`
+	UpdatedAt      string   `json:"updated_at"`
+	WorkInProgress bool     `json:"work_in_progress"` // GitLab's draft equivalent
+	ChangesCount   string   `json:"changes_count"`
+	UserNotesCount int      `json:"user_notes_count"`
 }
 
 // ListOpenMRs fetches open merge requests (up to limit)

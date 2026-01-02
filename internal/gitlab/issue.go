@@ -11,10 +11,10 @@ import (
 
 // Issue represents a GitLab issue
 type Issue struct {
-	IID         int      `json:"iid"`          // Issue IID (internal ID, scoped to project)
+	IID         int      `json:"iid"` // Issue IID (internal ID, scoped to project)
 	Title       string   `json:"title"`
 	Description string   `json:"description"` // GitLab uses "description" not "body"
-	State       string   `json:"state"`        // "opened" or "closed"
+	State       string   `json:"state"`       // "opened" or "closed"
 	Labels      []string `json:"labels"`
 	WebURL      string   `json:"web_url"`
 	Author      Author   `json:"author"`

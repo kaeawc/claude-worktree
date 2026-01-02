@@ -240,9 +240,9 @@ func TestHasMergeConflicts(t *testing.T) {
 	fake := NewFakeGitLabExecutor()
 
 	tests := []struct {
-		mergeStatus    string
-		hasConflicts   bool
-		description    string
+		mergeStatus  string
+		hasConflicts bool
+		description  string
 	}{
 		{"can_be_merged", false, "can be merged"},
 		{"can_be_merged_automerge", false, "can be merged with automerge"},
