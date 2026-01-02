@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,14 @@ import (
 
 // RunInteractiveMenu displays the main interactive menu.
 func RunInteractiveMenu() error {
+	for {
+		if err := showInteractiveMenu(); err != nil {
+			return err
+		}
+	}
+}
+
+func showInteractiveMenu() error {
 	items := []ui.MenuItem{
 		ui.NewMenuItem("New Worktree", "Create a new worktree with a new branch", "new"),
 		ui.NewMenuItem("Resume Worktree", "Resume working on the last worktree", "resume"),
@@ -57,32 +66,66 @@ func RunInteractiveMenu() error {
 	}
 
 	// Route to the appropriate command handler
-	return routeMenuChoice(choice)
+	return routeMenuChoice(choice, true)
 }
 
-func routeMenuChoice(choice string) error {
+func routeMenuChoice(choice string, returnToMenu bool) error {
+	var err error
+
 	switch choice {
 	case "new":
-		return RunNew()
+		err = RunNew()
 	case "resume":
-		return RunResume()
+		err = RunResume()
 	case "issue":
-		return RunIssue("")
+		err = RunIssue("")
 	case "create":
-		return RunCreate()
+		err = RunCreate()
 	case "pr":
-		return RunPR("")
+		err = RunPR("")
 	case "list":
-		return RunList()
+		err = RunList()
 	case "sessions":
-		return RunSessions()
+		err = RunSessions()
 	case "cleanup":
-		return RunCleanup()
+		err = RunCleanup()
 	case "settings":
-		return RunSettings()
+		err = RunSettings()
 	default:
 		return fmt.Errorf("unknown command: %s", choice)
 	}
+
+	// If command succeeded and we should return to menu, do nothing (loop will continue)
+	// If command failed, return the error
+	// If not returning to menu, exit
+	if err != nil {
+		return err
+	}
+
+	if !returnToMenu {
+		return nil
+	}
+
+	// Ask if user wants to return to menu
+	fmt.Println()
+	confirmModel := ui.NewConfirmModel("Return to main menu?")
+	p := tea.NewProgram(confirmModel)
+	result, err := p.Run()
+	if err != nil {
+		return nil
+	}
+
+	confirmed, ok := result.(*ui.ConfirmModel)
+	if !ok {
+		return nil
+	}
+
+	if !confirmed.GetChoice() {
+		return nil
+	}
+
+	// Return nil to continue the loop in showInteractiveMenu
+	return nil
 }
 
 // RunList lists all worktrees.
@@ -635,7 +678,14 @@ func RunCreate() error {
 	// Create tmux session with metadata and auto-install
 	sessionMgr := session.NewManager()
 	if !sessionMgr.IsAvailable() {
-		return fmt.Errorf("tmux is not available - please install tmux to use this feature")
+		if err := handleMissingTmux(); err != nil {
+			return err
+		}
+		// Retry after installation
+		sessionMgr = session.NewManager()
+		if !sessionMgr.IsAvailable() {
+			return fmt.Errorf("tmux is still not available after installation attempt")
+		}
 	}
 
 	sessionName := session.GenerateSessionName(branchName)
@@ -1788,7 +1838,14 @@ func startAISession(worktreePath, branchName, rootPath string, issue *github.Iss
 	// Initialize session manager
 	sessionMgr := session.NewManager()
 	if !sessionMgr.IsAvailable() {
-		return fmt.Errorf("tmux is not available - please install tmux to use this feature")
+		if err := handleMissingTmux(); err != nil {
+			return err
+		}
+		// Retry after installation
+		sessionMgr = session.NewManager()
+		if !sessionMgr.IsAvailable() {
+			return fmt.Errorf("tmux is still not available after installation attempt")
+		}
 	}
 
 	// Resolve AI tool
@@ -2074,6 +2131,134 @@ func generateAIReviewSummary(client *github.Client, pr *github.PullRequest, repo
 	return nil
 }
 
+// getTmuxInstallInstructions returns OS-specific tmux installation instructions
+func getTmuxInstallInstructions() (string, string) {
+	switch runtime.GOOS {
+	case "darwin":
+		return "macOS (Homebrew)", "brew install tmux"
+	case "linux":
+		// Detect Linux distribution
+		if isAptBasedLinux() {
+			return "Linux (Ubuntu/Debian)", "sudo apt update && sudo apt install tmux"
+		} else if isRpmBasedLinux() {
+			return "Linux (Fedora/RHEL/CentOS)", "sudo yum install tmux\nor\nsudo dnf install tmux"
+		} else if isPacmanBasedLinux() {
+			return "Linux (Arch)", "sudo pacman -S tmux"
+		}
+		return "Linux", "Visit: https://github.com/tmux/tmux/wiki/Installing"
+	case "windows":
+		return "Windows (WSL2 Recommended)", "WSL2: wsl --install Ubuntu && wsl ubuntu run sudo apt install tmux\nOr use: choco install tmux"
+	default:
+		return runtime.GOOS, "Visit: https://github.com/tmux/tmux/wiki/Installing"
+	}
+}
+
+// isAptBasedLinux checks if system uses apt package manager
+func isAptBasedLinux() bool {
+	_, err := exec.LookPath("apt")
+	return err == nil
+}
+
+// isRpmBasedLinux checks if system uses rpm-based package manager
+func isRpmBasedLinux() bool {
+	_, err := exec.LookPath("yum")
+	if err == nil {
+		return true
+	}
+	_, err = exec.LookPath("dnf")
+	return err == nil
+}
+
+// isPacmanBasedLinux checks if system uses pacman package manager
+func isPacmanBasedLinux() bool {
+	_, err := exec.LookPath("pacman")
+	return err == nil
+}
+
+// tryInstallTmux attempts to install tmux using OS-specific package manager
+func tryInstallTmux() bool {
+	fmt.Println("\n⚠ Attempting to install tmux...")
+
+	var cmd *exec.Cmd
+
+	switch runtime.GOOS {
+	case "darwin":
+		// Check if Homebrew is installed
+		_, err := exec.LookPath("brew")
+		if err != nil {
+			fmt.Println("❌ Homebrew not found. Please install Homebrew from https://brew.sh")
+			return false
+		}
+		cmd = exec.Command("brew", "install", "tmux")
+
+	case "linux":
+		if isAptBasedLinux() {
+			cmd = exec.Command("sudo", "apt", "update")
+			if err := cmd.Run(); err != nil {
+				fmt.Printf("❌ Failed to update package manager: %v\n", err)
+				return false
+			}
+			cmd = exec.Command("sudo", "apt", "install", "-y", "tmux")
+		} else if isRpmBasedLinux() {
+			// Try dnf first (newer), then yum
+			_, err := exec.LookPath("dnf")
+			if err == nil {
+				cmd = exec.Command("sudo", "dnf", "install", "-y", "tmux")
+			} else {
+				cmd = exec.Command("sudo", "yum", "install", "-y", "tmux")
+			}
+		} else if isPacmanBasedLinux() {
+			cmd = exec.Command("sudo", "pacman", "-S", "--noconfirm", "tmux")
+		} else {
+			fmt.Println("❌ No supported package manager found")
+			return false
+		}
+
+	default:
+		fmt.Printf("❌ Automatic installation not supported on %s\n", runtime.GOOS)
+		return false
+	}
+
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("❌ Failed to install tmux: %v\n", err)
+		return false
+	}
+
+	fmt.Println("✓ tmux installed successfully!")
+	return true
+}
+
+// handleMissingTmux displays installation instructions and offers to install
+func handleMissingTmux() error {
+	osName, installCmd := getTmuxInstallInstructions()
+
+	fmt.Printf("\n❌ tmux is not installed\n\n")
+	fmt.Printf("Platform: %s\n", osName)
+	fmt.Printf("Installation command:\n  %s\n\n", installCmd)
+
+	// Ask if user wants to attempt auto-installation
+	fmt.Println("Would you like to attempt automatic installation?")
+	confirmModel := ui.NewConfirmModel("Install tmux now?")
+	p := tea.NewProgram(confirmModel)
+	result, err := p.Run()
+	if err != nil {
+		return fmt.Errorf("tmux is required - please install it manually")
+	}
+
+	confirmed, ok := result.(*ui.ConfirmModel)
+	if !ok || !confirmed.GetChoice() {
+		return fmt.Errorf("tmux is required - please install it manually")
+	}
+
+	// Attempt installation
+	if tryInstallTmux() {
+		fmt.Println("Please try the operation again.")
+		return nil
+	}
+
+	return fmt.Errorf("tmux installation failed - please install manually")
+}
+
 // formatAIReviewPrompt formats a prompt for AI review
 func formatAIReviewPrompt(pr *github.PullRequest, diff string) string {
 	return fmt.Sprintf(`Please review this pull request:
@@ -2140,16 +2325,25 @@ func RunSessions() error {
 		return fmt.Errorf("failed to load sessions: %w", err)
 	}
 
-	// If no sessions exist
-	if len(metadataList) == 0 {
-		fmt.Println("No tmux sessions found.")
+	// Filter out sessions that no longer exist
+	validSessions := make([]*session.Metadata, 0)
+	for _, metadata := range metadataList {
+		exists, err := mgr.HasSession(metadata.SessionName)
+		if err == nil && exists {
+			validSessions = append(validSessions, metadata)
+		}
+	}
+
+	// If no valid sessions exist
+	if len(validSessions) == 0 {
+		fmt.Println("No active tmux sessions found.")
 		fmt.Println("Create a new worktree or work on an issue to start a session.")
 		return nil
 	}
 
 	// Convert metadata to UI items
-	items := make([]ui.SessionListItem, len(metadataList))
-	for i, metadata := range metadataList {
+	items := make([]ui.SessionListItem, len(validSessions))
+	for i, metadata := range validSessions {
 		items[i] = ui.NewSessionListItem(metadata)
 	}
 
@@ -2175,7 +2369,12 @@ func RunSessions() error {
 	// Attach to the selected session
 	metadata := choice.Metadata()
 	if err := mgr.AttachToSession(metadata.SessionName); err != nil {
-		return fmt.Errorf("failed to attach to session: %w", err)
+		// Session no longer exists - show error and return to menu
+		fmt.Printf("\n❌ Error: %v\n", err)
+		fmt.Println("This session may have been closed or terminated.")
+		fmt.Println("\nPress Enter to return to the menu...")
+		fmt.Scanln()
+		return nil
 	}
 
 	return nil
