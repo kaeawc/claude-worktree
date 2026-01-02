@@ -336,9 +336,15 @@ func TestHookManager_ExecuteWorktreeHooks(t *testing.T) {
 				return false
 			}
 
-			// Configure hook errors
+			// Configure hook errors (normalize paths and add extension variants for Windows)
 			for hookPath, err := range tt.hookErrors {
-				fakeHook.SetError(hookPath, err)
+				normalizedPath := filepath.FromSlash(hookPath)
+				// Set error for base path and all Windows extension variants
+				fakeHook.SetError(normalizedPath, err)
+				fakeHook.SetError(normalizedPath+".bat", err)
+				fakeHook.SetError(normalizedPath+".cmd", err)
+				fakeHook.SetError(normalizedPath+".exe", err)
+				fakeHook.SetError(normalizedPath+".ps1", err)
 			}
 
 			// Create hook manager
