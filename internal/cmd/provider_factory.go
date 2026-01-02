@@ -1,3 +1,4 @@
+// Package cmd provides command-line interface handlers for auto-worktree operations.
 package cmd
 
 import (
@@ -28,7 +29,7 @@ func GetProviderForRepository(repo *git.Repository) (providers.Provider, error) 
 	case "jira":
 		return newJIRAProvider()
 	case "linear":
-		return nil, errors.New("Linear provider not yet implemented")
+		return nil, errors.New("linear provider not yet implemented")
 	case "":
 		// Try to auto-detect from the repo
 		return autoDetectProvider(repo)
@@ -108,6 +109,7 @@ func (g *githubProviderShim) ListIssues(ctx context.Context, limit int) ([]provi
 func (g *githubProviderShim) GetIssue(ctx context.Context, id string) (*providers.Issue, error) {
 	// Parse issue number from ID
 	var issueNum int
+	//nolint:errcheck
 	fmt.Sscanf(id, "%d", &issueNum)
 
 	issue, err := g.client.GetIssue(issueNum)
@@ -133,6 +135,7 @@ func (g *githubProviderShim) GetIssue(ctx context.Context, id string) (*provider
 
 func (g *githubProviderShim) IsIssueClosed(ctx context.Context, id string) (bool, error) {
 	var issueNum int
+	//nolint:errcheck
 	fmt.Sscanf(id, "%d", &issueNum)
 	return g.client.IsIssueMerged(issueNum)
 }
@@ -248,6 +251,7 @@ func (g *gitlabProviderShim) ListIssues(ctx context.Context, limit int) ([]provi
 
 func (g *gitlabProviderShim) GetIssue(ctx context.Context, id string) (*providers.Issue, error) {
 	var issueID int
+	//nolint:errcheck
 	fmt.Sscanf(id, "%d", &issueID)
 
 	issue, err := g.client.GetIssue(issueID)
@@ -268,6 +272,7 @@ func (g *gitlabProviderShim) GetIssue(ctx context.Context, id string) (*provider
 
 func (g *gitlabProviderShim) IsIssueClosed(ctx context.Context, id string) (bool, error) {
 	var issueID int
+	//nolint:errcheck
 	fmt.Sscanf(id, "%d", &issueID)
 	return g.client.IsIssueClosed(issueID)
 }
