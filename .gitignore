@@ -15,3 +15,7 @@ coverage.html
 
 # Go vendor directory
 vendor/
+
+aw
+auto-worktree
+
