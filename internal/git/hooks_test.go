@@ -107,14 +107,25 @@ func TestHookManager_FindHookDirectories(t *testing.T) {
 		{
 			name: "custom hooks path configured (absolute)",
 			configResponses: map[string]string{
-				"config --local --get core.hooksPath":  "/custom/hooks",
+				"config --local --get core.hooksPath":  func() string {
+					if filepath.Separator == '\\' {
+						// Windows needs drive letter for absolute paths
+						return "C:\\custom\\hooks"
+					}
+					return "/custom/hooks"
+				}(),
 				"config --global --get core.hooksPath": "",
 			},
 			gitResponses: map[string]string{
 				"rev-parse --git-common-dir": ".git",
 			},
 			expectedDirs: []string{
-				"/custom/hooks",
+				func() string {
+					if filepath.Separator == '\\' {
+						return "C:\\custom\\hooks"
+					}
+					return "/custom/hooks"
+				}(),
 				"/test/repo/.git/hooks",
 			},
 		},
