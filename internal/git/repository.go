@@ -257,3 +257,36 @@ func (r *Repository) GetCleanupCandidates() ([]*Worktree, error) {
 	// Return merged first, then stale
 	return append(merged, stale...), nil
 }
+
+// StartupCleanupCandidates represents cleanup results categorized by type
+type StartupCleanupCandidates struct {
+	Orphaned []*Worktree
+	Merged   []*Worktree
+}
+
+// GetStartupCleanupCandidates returns worktrees that need cleanup at startup
+// Orphaned worktrees are automatically cleaned, merged ones are interactive
+func (r *Repository) GetStartupCleanupCandidates() (*StartupCleanupCandidates, error) {
+	worktrees, err := r.ListWorktreesWithMergeStatus()
+	if err != nil {
+		return nil, err
+	}
+
+	// Filter out main branch
+	worktrees = r.FilterOutMainBranch(worktrees)
+
+	candidates := &StartupCleanupCandidates{
+		Orphaned: []*Worktree{},
+		Merged:   []*Worktree{},
+	}
+
+	for _, wt := range worktrees {
+		if wt.IsOrphaned() {
+			candidates.Orphaned = append(candidates.Orphaned, wt)
+		} else if wt.IsMerged() {
+			candidates.Merged = append(candidates.Merged, wt)
+		}
+	}
+
+	return candidates, nil
+}

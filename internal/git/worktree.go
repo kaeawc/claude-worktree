@@ -262,8 +262,18 @@ func (w *Worktree) ShouldCleanup() bool {
 	return w.IsMerged() || w.IsStale()
 }
 
+// IsOrphaned returns true if the worktree path doesn't exist or is broken
+func (w *Worktree) IsOrphaned() bool {
+	// Check if the path exists
+	_, err := os.Stat(w.Path)
+	return os.IsNotExist(err)
+}
+
 // CleanupReason returns a string describing why this worktree should be cleaned up
 func (w *Worktree) CleanupReason() string {
+	if w.IsOrphaned() {
+		return "orphaned"
+	}
 	if w.IsMerged() {
 		if w.IssueStatus != nil {
 			return fmt.Sprintf("merged (#%s)", w.IssueStatus.ID)

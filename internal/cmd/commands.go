@@ -1010,6 +1010,59 @@ func RunPR(prID string) error {
 	return nil
 }
 
+// RunStartupCleanup performs automatic cleanup of orphaned and merged worktrees at startup
+func RunStartupCleanup() error {
+	repo, err := git.NewRepository()
+	if err != nil {
+		return fmt.Errorf("error: %w", err)
+	}
+
+	// Get startup cleanup candidates
+	candidates, err := repo.GetStartupCleanupCandidates()
+	if err != nil {
+		return fmt.Errorf("error finding cleanup candidates: %w", err)
+	}
+
+	// If there's nothing to clean, return early
+	if len(candidates.Orphaned) == 0 && len(candidates.Merged) == 0 {
+		return nil
+	}
+
+	// Process orphaned worktrees (automatic deletion with summary)
+	deletedOrphaned := 0
+	if len(candidates.Orphaned) > 0 {
+		fmt.Printf("Cleaning up %d orphaned worktree(s)...\n", len(candidates.Orphaned))
+		for _, wt := range candidates.Orphaned {
+			if err := cleanupWorktree(repo, wt, false); err != nil {
+				fmt.Printf("  Warning: failed to clean up %s: %v\n", wt.Path, err)
+				continue
+			}
+			fmt.Printf("  ✓ Removed %s\n", wt.Path)
+			deletedOrphaned++
+		}
+		if deletedOrphaned > 0 {
+			fmt.Println()
+		}
+	}
+
+	// Process merged worktrees (interactive with skip option)
+	if len(candidates.Merged) > 0 {
+		fmt.Printf("Found %d merged worktree(s) ready for cleanup:\n\n", len(candidates.Merged))
+		processStartupMergedWorktrees(repo, candidates.Merged)
+	}
+
+	return nil
+}
+
+// processStartupMergedWorktrees handles interactive cleanup of merged worktrees at startup
+func processStartupMergedWorktrees(repo *git.Repository, merged []*git.Worktree) {
+	for _, wt := range merged {
+		if err := interactiveCleanup(repo, wt); err != nil {
+			fmt.Printf("  Error: %v\n", err)
+		}
+	}
+}
+
 // RunCleanup performs interactive cleanup.
 func RunCleanup() error {
 	repo, err := git.NewRepository()
