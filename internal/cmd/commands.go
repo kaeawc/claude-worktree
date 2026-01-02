@@ -327,10 +327,128 @@ func setupEnvironment(repo *git.Repository, worktreePath string) {
 	}
 }
 
-// RunResume resumes the last worktree.
+// RunResume resumes a worktree by listing available sessions and worktrees.
 func RunResume() error {
-	// TODO: Implement resume logic
-	return fmt.Errorf("'resume' command not yet implemented")
+	// Initialize repository and session manager
+	repo, err := git.NewRepository()
+	if err != nil {
+		return fmt.Errorf("error: %w", err)
+	}
+
+	sessionMgr := session.NewManager()
+
+	// Get all worktrees
+	worktrees, err := repo.ListWorktreesWithMergeStatus()
+	if err != nil {
+		return fmt.Errorf("error listing worktrees: %w", err)
+	}
+
+	if len(worktrees) == 0 {
+		return fmt.Errorf("no worktrees found")
+	}
+
+	// Get all active sessions
+	allSessions, err := sessionMgr.ListSessions()
+	if err != nil {
+		return fmt.Errorf("error listing sessions: %w", err)
+	}
+
+	// Filter for auto-worktree sessions
+	sessionMap := make(map[string]bool)
+	for _, s := range allSessions {
+		if strings.HasPrefix(s, "auto-worktree-") {
+			sessionMap[s] = true
+		}
+	}
+
+	// Create filterable list items from worktrees
+	// Prioritize worktrees with active sessions first
+	var itemsWithSessions []ui.FilterableListItem
+	var itemsWithoutSessions []ui.FilterableListItem
+	worktreeMap := make(map[int]*git.Worktree)
+
+	for i, wt := range worktrees {
+		sessionName := session.GenerateSessionName(wt.Branch)
+		hasSession := sessionMap[sessionName]
+
+		item := ui.NewFilterableListItem(
+			i,
+			wt.Branch,
+			[]string{},
+			hasSession,
+		)
+		worktreeMap[i] = wt
+
+		if hasSession {
+			itemsWithSessions = append(itemsWithSessions, item)
+		} else {
+			itemsWithoutSessions = append(itemsWithoutSessions, item)
+		}
+	}
+
+	// Combine items: sessions first, then others
+	var items []ui.FilterableListItem
+	items = append(items, itemsWithSessions...)
+	items = append(items, itemsWithoutSessions...)
+
+	if len(items) == 0 {
+		return fmt.Errorf("no worktrees found")
+	}
+
+	// Show selection UI
+	filterList := ui.NewFilterList("Select a worktree to resume", items)
+	p := tea.NewProgram(filterList, tea.WithAltScreen())
+
+	m, err := p.Run()
+	if err != nil {
+		return fmt.Errorf("failed to run selection: %w", err)
+	}
+
+	finalModel, ok := m.(ui.FilterListModel)
+	if !ok {
+		return fmt.Errorf("unexpected model type")
+	}
+
+	if finalModel.Err() != nil {
+		return finalModel.Err()
+	}
+
+	choice := finalModel.Choice()
+	if choice == nil {
+		return nil // User canceled
+	}
+
+	selectedWorktree := worktreeMap[choice.Number()]
+	if selectedWorktree == nil {
+		return fmt.Errorf("selected worktree not found")
+	}
+
+	// Run post-worktree hooks before resuming
+	if err := runPostWorktreeHooks(selectedWorktree.Path, repo.RootPath); err != nil {
+		fmt.Printf("⚠ Hook execution warning: %v\n", err)
+		// Non-fatal: continue with resume
+	}
+
+	// Try to attach to session if available
+	sessionName := session.GenerateSessionName(selectedWorktree.Branch)
+	if sessionMap[sessionName] && sessionMgr.IsAvailable() {
+		fmt.Printf("Attaching to session: %s\n", sessionName)
+		if err := sessionMgr.AttachToSession(sessionName); err != nil {
+			fmt.Printf("⚠ Failed to attach to session: %v\n", err)
+			fmt.Printf("To resume manually:\n")
+			fmt.Printf("  cd %s\n", selectedWorktree.Path)
+			return nil
+		}
+		return nil
+	}
+
+	// Fallback: show path
+	fmt.Printf("Worktree: %s\n", selectedWorktree.Branch)
+	fmt.Printf("Path: %s\n", selectedWorktree.Path)
+	fmt.Printf("\nTo resume working:\n")
+	fmt.Printf("  cd %s\n", selectedWorktree.Path)
+
+	return nil
 }
 
 // RunIssue works on an issue.
