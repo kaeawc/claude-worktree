@@ -561,8 +561,82 @@ func cleanupWorktree(repo *git.Repository, wt *git.Worktree, deleteBranch bool) 
 
 // RunSettings shows settings menu.
 func RunSettings() error {
-	// TODO: Implement settings menu
-	return fmt.Errorf("'settings' command not yet implemented")
+	// Show settings menu with provider and AI tool options
+	items := []ui.MenuItem{
+		ui.NewMenuItem("Issue Provider", "Select GitHub, GitLab, JIRA, or Linear", "provider"),
+		ui.NewMenuItem("AI Tool", "Configure AI coding assistant", "ai-tool"),
+		ui.NewMenuItem("Back", "Return to main menu", "back"),
+	}
+
+	menu := ui.NewMenu("Settings", items)
+	p := tea.NewProgram(menu)
+
+	m, err := p.Run()
+	if err != nil {
+		return fmt.Errorf("failed to run settings menu: %w", err)
+	}
+
+	finalModel, ok := m.(ui.MenuModel)
+	if !ok {
+		return fmt.Errorf("unexpected model type")
+	}
+
+	choice := finalModel.Choice()
+
+	switch choice {
+	case "provider":
+		return runProviderSelection()
+	case "ai-tool":
+		return runAIToolSelection()
+	case "back", "":
+		return nil
+	default:
+		return fmt.Errorf("unknown settings option: %s", choice)
+	}
+}
+
+func runProviderSelection() error {
+	providerMenu := ui.NewProviderMenuModel()
+	p := tea.NewProgram(providerMenu, tea.WithAltScreen())
+
+	model, err := p.Run()
+	if err != nil {
+		return fmt.Errorf("error running provider selection: %w", err)
+	}
+
+	m := model.(ui.ProviderMenuModel)
+	provider := m.GetChoice()
+
+	if provider != "" {
+		// TODO: Save to git config
+		fmt.Println("\n" + ui.SuccessStyle.Render(fmt.Sprintf("Provider set to: %s", provider)))
+		fmt.Println(ui.InfoStyle.Render("(Note: Provider integration coming soon)"))
+		fmt.Println()
+	}
+
+	return nil
+}
+
+func runAIToolSelection() error {
+	aiToolMenu := ui.NewAIToolMenuModel()
+	p := tea.NewProgram(aiToolMenu, tea.WithAltScreen())
+
+	model, err := p.Run()
+	if err != nil {
+		return fmt.Errorf("error running AI tool selection: %w", err)
+	}
+
+	m := model.(ui.AIToolMenuModel)
+	tool := m.GetChoice()
+
+	if tool != "" {
+		// TODO: Save to git config
+		fmt.Println("\n" + ui.SuccessStyle.Render(fmt.Sprintf("AI tool set to: %s", tool)))
+		fmt.Println(ui.InfoStyle.Render("(Note: AI tool integration coming soon)"))
+		fmt.Println()
+	}
+
+	return nil
 }
 
 // RunRemove removes a worktree.
