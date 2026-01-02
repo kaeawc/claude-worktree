@@ -85,7 +85,7 @@ func (l *LinearProvider) GetIssueStatus(issueID string) (bool, bool, error) {
 
 // GetPRStatus is not applicable for Linear (no PR concept)
 func (l *LinearProvider) GetPRStatus(prID string) (bool, error) {
-	return false, fmt.Errorf("Linear does not have pull requests")
+	return false, fmt.Errorf("linear does not have pull requests")
 }
 
 // GetStatusForBranch attempts to determine the status based on branch name

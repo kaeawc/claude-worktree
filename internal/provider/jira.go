@@ -86,7 +86,7 @@ func (j *JiraProvider) GetIssueStatus(issueID string) (bool, bool, error) {
 
 // GetPRStatus is not applicable for JIRA (no PR concept)
 func (j *JiraProvider) GetPRStatus(prID string) (bool, error) {
-	return false, fmt.Errorf("JIRA does not have pull requests")
+	return false, fmt.Errorf("jira does not have pull requests")
 }
 
 // GetStatusForBranch attempts to determine the status based on branch name
