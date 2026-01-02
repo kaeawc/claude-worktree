@@ -109,7 +109,7 @@ func TestHookManager_FindHookDirectories(t *testing.T) {
 		{
 			name: "custom hooks path configured (absolute)",
 			configResponses: map[string]string{
-				"config --local --get core.hooksPath":  func() string {
+				"config --local --get core.hooksPath": func() string {
 					if filepath.Separator == '\\' {
 						// Windows needs drive letter for absolute paths
 						return "C:\\custom\\hooks"
@@ -202,10 +202,10 @@ func TestHookManager_ExecuteWorktreeHooks(t *testing.T) {
 		expectedHooks   []string
 	}{
 		{
-			name:        "hooks disabled",
-			runHooks:    false,
-			failOnError: false,
-			customHooks: "",
+			name:          "hooks disabled",
+			runHooks:      false,
+			failOnError:   false,
+			customHooks:   "",
 			expectedHooks: []string{},
 		},
 		{

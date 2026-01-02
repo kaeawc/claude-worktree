@@ -9,6 +9,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+const (
+	filterKeyCtrlC = "ctrl+c"
+	filterKeyEsc   = "esc"
+	filterKeyEnter = "enter"
+)
+
 // FilterableListItem represents an item in the filterable list
 type FilterableListItem struct {
 	number      int
@@ -115,7 +121,7 @@ func (m FilterListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q":
+		case filterKeyCtrlC, "q":
 			if m.filtering {
 				// Exit filter mode
 				m.filtering = false
@@ -127,7 +133,7 @@ func (m FilterListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = fmt.Errorf("canceled")
 			return m, tea.Quit
 
-		case "esc":
+		case filterKeyEsc:
 			if m.filtering {
 				// Exit filter mode
 				m.filtering = false
@@ -139,7 +145,7 @@ func (m FilterListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = fmt.Errorf("canceled")
 			return m, tea.Quit
 
-		case "enter":
+		case filterKeyEnter:
 			if m.filtering {
 				// Exit filter mode and keep the filter
 				m.filtering = false
