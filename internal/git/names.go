@@ -4,7 +4,6 @@ package git
 import (
 	"fmt"
 	"math/rand"
-	"time"
 )
 
 // Word lists for generating random branch names
@@ -34,12 +33,9 @@ var (
 // RandomBranchName generates a random branch name using the pattern: work/color-adjective-animal
 // Example: work/coral-swift-zebra
 func RandomBranchName() string {
-	// Use current time as seed for better randomness
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-
-	color := colors[r.Intn(len(colors))]
-	adjective := adjectives[r.Intn(len(adjectives))]
-	animal := animals[r.Intn(len(animals))]
+	color := colors[rand.Intn(len(colors))]
+	adjective := adjectives[rand.Intn(len(adjectives))]
+	animal := animals[rand.Intn(len(animals))]
 
 	return fmt.Sprintf("work/%s-%s-%s", color, adjective, animal)
 }
