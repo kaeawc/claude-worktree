@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -23,21 +24,24 @@ func (l *LinearProvider) Name() string {
 
 // IsAvailable checks if linear CLI is installed
 func (l *LinearProvider) IsAvailable() bool {
-	cmd := exec.Command("linear", "--version")
+	cmd := exec.CommandContext(context.Background(), "linear", "--version")
 	err := cmd.Run()
 
 	return err == nil
 }
 
 // GetIssueStatus checks if a Linear issue is completed
+//
+//nolint:gocyclo // Complexity from comprehensive status checking logic
 func (l *LinearProvider) GetIssueStatus(issueID string) (bool, bool, error) {
 	if !l.IsAvailable() {
 		return false, false, ErrProviderNotAvailable
 	}
 
 	// Use linear issue view with JSON output
-	cmd := exec.Command("linear", "issue", issueID, "--json")
+	cmd := exec.CommandContext(context.Background(), "linear", "issue", issueID, "--json")
 	output, err := cmd.Output()
+
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			if strings.Contains(string(exitErr.Stderr), "not found") ||
@@ -86,7 +90,7 @@ func (l *LinearProvider) GetIssueStatus(issueID string) (bool, bool, error) {
 }
 
 // GetPRStatus is not applicable for Linear (no PR concept)
-func (l *LinearProvider) GetPRStatus(prID string) (bool, error) {
+func (l *LinearProvider) GetPRStatus(_ string) (bool, error) {
 	return false, fmt.Errorf("linear does not have pull requests")
 }
 

@@ -116,21 +116,23 @@ func extractProjectID(branchName, prefix string, prefixLen int) (string, bool) {
 	var projectID string
 	inNumber := false
 
+loop:
 	for i := actualPrefixLen; i < len(branchName); i++ {
 		ch := branchName[i]
-		if ch >= 'A' && ch <= 'Z' {
+		switch {
+		case ch >= 'A' && ch <= 'Z':
 			projectID += string(ch)
-		} else if ch == '-' {
+		case ch == '-':
 			if len(projectID) > 0 {
 				projectID += string(ch)
 				inNumber = true
 			} else {
-				break
+				break loop
 			}
-		} else if ch >= '0' && ch <= '9' && inNumber {
+		case ch >= '0' && ch <= '9' && inNumber:
 			projectID += string(ch)
-		} else {
-			break
+		default:
+			break loop
 		}
 	}
 

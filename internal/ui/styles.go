@@ -3,13 +3,14 @@ package ui
 import "github.com/charmbracelet/lipgloss"
 
 // Common styles used across UI components
+// Updated to use gum color scheme (ANSI 1-6) from theme.go
 var (
-	// Color palette
-	primaryColor = lipgloss.Color("170") // Purple
-	successColor = lipgloss.Color("42")  // Green
-	errorColor   = lipgloss.Color("196") // Red
-	warningColor = lipgloss.Color("214") // Orange
-	subtleColor  = lipgloss.Color("241") // Gray
+	// Color palette - using gum color scheme
+	primaryColor = ColorCyan             // Cyan for highlights/primary actions
+	successColor = ColorGreen            // Green for success
+	errorColor   = ColorRed              // Red for errors
+	warningColor = ColorYellow           // Yellow for warnings
+	subtleColor  = lipgloss.Color("241") // Gray for subtle text
 
 	// Text styles
 	TitleStyle   = lipgloss.NewStyle().Bold(true).Foreground(primaryColor)
@@ -22,7 +23,7 @@ var (
 	// Layout styles
 	BoxStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(primaryColor).
+			BorderForeground(ColorBlue). // Blue for borders/info
 			Padding(1, 2)
 
 	HeaderStyle = lipgloss.NewStyle().

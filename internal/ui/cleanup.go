@@ -11,6 +11,7 @@ const (
 	promptStateBranch = "branch"
 	promptStateDone   = "done"
 	keyCtrlC          = "ctrl+c"
+	keyEsc            = "esc"
 )
 
 var (
@@ -52,37 +53,40 @@ func (m CleanupPromptModel) Init() tea.Cmd {
 
 // Update handles cleanup prompt updates
 func (m CleanupPromptModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
 		switch m.PromptState {
 		case "confirm":
-			switch msg.String() {
+			switch keyMsg.String() {
 			case "y", "Y":
 				// User confirmed cleanup
 				if m.Branch != "" {
 					// Move to branch deletion prompt
 					m.PromptState = promptStateBranch
+
 					return m, nil
 				}
 				// No branch, just confirm cleanup
 				m.Confirmed = true
 				m.PromptState = promptStateDone
+
 				return m, tea.Quit
 
-			case "n", "N", "q", keyCtrlC, "esc":
+			case "n", "N", "q", keyCtrlC, keyEsc:
 				// User canceled
 				m.Canceled = true
 				m.PromptState = promptStateDone
+
 				return m, tea.Quit
 			}
 
 		case promptStateBranch:
-			switch msg.String() {
+			switch keyMsg.String() {
 			case "y", "Y":
 				// User confirmed branch deletion
 				m.DeleteBranch = true
 				m.Confirmed = true
 				m.PromptState = promptStateDone
+
 				return m, tea.Quit
 
 			case "n", "N":
@@ -90,12 +94,14 @@ func (m CleanupPromptModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.DeleteBranch = false
 				m.Confirmed = true
 				m.PromptState = promptStateDone
+
 				return m, tea.Quit
 
-			case "q", keyCtrlC, "esc":
+			case "q", keyCtrlC, keyEsc:
 				// User canceled
 				m.Canceled = true
 				m.PromptState = promptStateDone
+
 				return m, tea.Quit
 			}
 		}
@@ -117,6 +123,7 @@ func (m CleanupPromptModel) View() string {
 	if m.Branch != "" {
 		s += fmt.Sprintf("Branch: %s\n", m.Branch)
 	}
+
 	if m.CleanupReason != "" {
 		s += fmt.Sprintf("Reason: %s\n", m.CleanupReason)
 	}
@@ -180,15 +187,16 @@ func (m CleanupConfirmationModel) Init() tea.Cmd {
 
 // Update handles confirmation updates
 func (m CleanupConfirmationModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
+	if keyMsg, ok := msg.(tea.KeyMsg); ok {
+		switch keyMsg.String() {
 		case "y", "Y":
 			m.Confirmed = true
+
 			return m, tea.Quit
 
-		case "n", "N", "q", keyCtrlC, "esc":
+		case "n", "N", "q", keyCtrlC, keyEsc:
 			m.Canceled = true
+
 			return m, tea.Quit
 		}
 	}
