@@ -26,15 +26,15 @@ type Session struct {
 	Directory string
 }
 
-// Manager handles terminal multiplexer sessions
-type Manager struct {
+// SessionManager handles terminal multiplexer sessions
+type SessionManager struct { //nolint:revive // Concrete type name, not an interface
 	sessionType   Type
 	metadataStore MetadataStore
 }
 
 // NewManager creates a new session manager
 // It requires tmux - screen is no longer supported
-func NewManager() *Manager {
+func NewManager() *SessionManager {
 	sessionType := TypeNone
 	if commandExists("tmux") {
 		sessionType = TypeTmux
@@ -44,7 +44,7 @@ func NewManager() *Manager {
 	sessionDir, err := GetSessionDir()
 	if err != nil {
 		// If metadata store initialization fails, continue without it
-		return &Manager{
+		return &SessionManager{
 			sessionType:   sessionType,
 			metadataStore: nil,
 		}
@@ -53,30 +53,30 @@ func NewManager() *Manager {
 	metadataStore, err := NewMetadataStore(sessionDir)
 	if err != nil {
 		// If metadata store initialization fails, continue without it
-		return &Manager{
+		return &SessionManager{
 			sessionType:   sessionType,
 			metadataStore: nil,
 		}
 	}
 
-	return &Manager{
+	return &SessionManager{
 		sessionType:   sessionType,
 		metadataStore: metadataStore,
 	}
 }
 
 // SessionType returns the session type this manager uses
-func (m *Manager) SessionType() Type {
+func (m *SessionManager) SessionType() Type {
 	return m.sessionType
 }
 
 // IsAvailable returns true if a session manager is available
-func (m *Manager) IsAvailable() bool {
+func (m *SessionManager) IsAvailable() bool {
 	return m.sessionType != TypeNone
 }
 
 // CreateSession creates a new detached session running the specified command
-func (m *Manager) CreateSession(name, workingDir string, command []string) error {
+func (m *SessionManager) CreateSession(name, workingDir string, command []string) error {
 	if !m.IsAvailable() {
 		return fmt.Errorf("no terminal multiplexer available (install tmux or screen)")
 	}
@@ -92,7 +92,7 @@ func (m *Manager) CreateSession(name, workingDir string, command []string) error
 }
 
 // createTmuxSession creates a detached tmux session
-func (m *Manager) createTmuxSession(name, workingDir string, command []string) error {
+func (m *SessionManager) createTmuxSession(name, workingDir string, command []string) error {
 	args := []string{
 		"new-session",
 		"-d",       // Detached
@@ -116,16 +116,14 @@ func (m *Manager) createTmuxSession(name, workingDir string, command []string) e
 		"default-terminal", "tmux-256color",
 	}
 	configCmd := exec.CommandContext(context.Background(), "tmux", configArgs...)
-	if err := configCmd.Run(); err != nil {
-		// Non-fatal: configuration failed but session is created
-		// Continue without error
-	}
+	_ = configCmd.Run() //nolint:errcheck // Non-fatal: configuration failure doesn't prevent session creation
+	// Non-fatal: configuration failed but session is created
 
 	return nil
 }
 
 // createScreenSession creates a detached screen session
-func (m *Manager) createScreenSession(name, workingDir string, command []string) error {
+func (m *SessionManager) createScreenSession(name, workingDir string, command []string) error {
 	// screen doesn't support -c flag for working directory,
 	// so we wrap the command in a shell that changes directory first
 	shellCmd := fmt.Sprintf("cd %s && %s",
@@ -141,7 +139,7 @@ func (m *Manager) createScreenSession(name, workingDir string, command []string)
 }
 
 // HasSession checks if a session with the given name exists
-func (m *Manager) HasSession(name string) (bool, error) {
+func (m *SessionManager) HasSession(name string) (bool, error) {
 	if !m.IsAvailable() {
 		return false, nil
 	}
@@ -171,7 +169,7 @@ func (m *Manager) HasSession(name string) (bool, error) {
 }
 
 // ListSessions returns all active sessions
-func (m *Manager) ListSessions() ([]string, error) {
+func (m *SessionManager) ListSessions() ([]string, error) {
 	if !m.IsAvailable() {
 		return []string{}, nil
 	}
@@ -187,7 +185,7 @@ func (m *Manager) ListSessions() ([]string, error) {
 }
 
 // listTmuxSessions lists all tmux sessions
-func (m *Manager) listTmuxSessions() ([]string, error) {
+func (m *SessionManager) listTmuxSessions() ([]string, error) {
 	cmd := exec.CommandContext(context.Background(), "tmux", "list-sessions", "-F", "#{session_name}")
 	output, err := cmd.Output()
 
@@ -202,7 +200,7 @@ func (m *Manager) listTmuxSessions() ([]string, error) {
 }
 
 // listScreenSessions lists all screen sessions
-func (m *Manager) listScreenSessions() ([]string, error) {
+func (m *SessionManager) listScreenSessions() ([]string, error) {
 	cmd := exec.CommandContext(context.Background(), "screen", "-ls")
 	output, err := cmd.Output()
 
@@ -235,7 +233,7 @@ func (m *Manager) listScreenSessions() ([]string, error) {
 }
 
 // KillSession terminates a session
-func (m *Manager) KillSession(name string) error {
+func (m *SessionManager) KillSession(name string) error {
 	if !m.IsAvailable() {
 		return fmt.Errorf("no terminal multiplexer available")
 	}
@@ -275,7 +273,7 @@ func (m *Manager) KillSession(name string) error {
 }
 
 // AttachToSession opens a new terminal window attached to the session
-func (m *Manager) AttachToSession(name string) error {
+func (m *SessionManager) AttachToSession(name string) error {
 	if !m.IsAvailable() {
 		return fmt.Errorf("no terminal multiplexer available")
 	}
@@ -405,7 +403,7 @@ func escapeAppleScript(s string) string {
 }
 
 // SaveSessionMetadata saves metadata for a session
-func (m *Manager) SaveSessionMetadata(metadata *Metadata) error {
+func (m *SessionManager) SaveSessionMetadata(metadata *Metadata) error {
 	if m.metadataStore == nil {
 		return fmt.Errorf("metadata store not available")
 	}
@@ -414,7 +412,7 @@ func (m *Manager) SaveSessionMetadata(metadata *Metadata) error {
 }
 
 // LoadSessionMetadata loads metadata for a session
-func (m *Manager) LoadSessionMetadata(sessionName string) (*Metadata, error) {
+func (m *SessionManager) LoadSessionMetadata(sessionName string) (*Metadata, error) {
 	if m.metadataStore == nil {
 		return nil, fmt.Errorf("metadata store not available")
 	}
@@ -423,7 +421,7 @@ func (m *Manager) LoadSessionMetadata(sessionName string) (*Metadata, error) {
 }
 
 // DeleteSessionMetadata removes metadata for a session
-func (m *Manager) DeleteSessionMetadata(sessionName string) error {
+func (m *SessionManager) DeleteSessionMetadata(sessionName string) error {
 	if m.metadataStore == nil {
 		return fmt.Errorf("metadata store not available")
 	}
@@ -432,7 +430,7 @@ func (m *Manager) DeleteSessionMetadata(sessionName string) error {
 }
 
 // ListSessionMetadata returns all session metadata
-func (m *Manager) ListSessionMetadata() ([]string, error) {
+func (m *SessionManager) ListSessionMetadata() ([]string, error) {
 	if m.metadataStore == nil {
 		return nil, fmt.Errorf("metadata store not available")
 	}
@@ -441,7 +439,7 @@ func (m *Manager) ListSessionMetadata() ([]string, error) {
 }
 
 // LoadAllSessionMetadata loads all session metadata
-func (m *Manager) LoadAllSessionMetadata() ([]*Metadata, error) {
+func (m *SessionManager) LoadAllSessionMetadata() ([]*Metadata, error) {
 	if m.metadataStore == nil {
 		return nil, fmt.Errorf("metadata store not available")
 	}
@@ -450,7 +448,7 @@ func (m *Manager) LoadAllSessionMetadata() ([]*Metadata, error) {
 }
 
 // UpdateSessionStatus updates the status of a session
-func (m *Manager) UpdateSessionStatus(sessionName string, status Status) error {
+func (m *SessionManager) UpdateSessionStatus(sessionName string, status Status) error {
 	if m.metadataStore == nil {
 		return fmt.Errorf("metadata store not available")
 	}
@@ -460,7 +458,7 @@ func (m *Manager) UpdateSessionStatus(sessionName string, status Status) error {
 
 // PauseSession marks a session as paused in metadata
 // Note: The tmux session itself continues running; this just updates the metadata status
-func (m *Manager) PauseSession(sessionName string) error {
+func (m *SessionManager) PauseSession(sessionName string) error {
 	if err := m.UpdateSessionStatus(sessionName, StatusPaused); err != nil {
 		return fmt.Errorf("failed to pause session: %w", err)
 	}
@@ -469,7 +467,7 @@ func (m *Manager) PauseSession(sessionName string) error {
 }
 
 // ResumeSession marks a session as running in metadata
-func (m *Manager) ResumeSession(sessionName string) error {
+func (m *SessionManager) ResumeSession(sessionName string) error {
 	if err := m.UpdateSessionStatus(sessionName, StatusRunning); err != nil {
 		return fmt.Errorf("failed to resume session: %w", err)
 	}
@@ -478,7 +476,7 @@ func (m *Manager) ResumeSession(sessionName string) error {
 }
 
 // GetSessionStatus returns the current status of a session from metadata
-func (m *Manager) GetSessionStatus(sessionName string) (Status, error) {
+func (m *SessionManager) GetSessionStatus(sessionName string) (Status, error) {
 	metadata, err := m.LoadSessionMetadata(sessionName)
 	if err != nil {
 		return StatusUnknown, err
@@ -488,18 +486,18 @@ func (m *Manager) GetSessionStatus(sessionName string) (Status, error) {
 }
 
 // MarkSessionFailed marks a session as failed in metadata
-func (m *Manager) MarkSessionFailed(sessionName string) error {
+func (m *SessionManager) MarkSessionFailed(sessionName string) error {
 	return m.UpdateSessionStatus(sessionName, StatusFailed)
 }
 
 // MarkSessionIdle marks a session as idle in metadata
-func (m *Manager) MarkSessionIdle(sessionName string) error {
+func (m *SessionManager) MarkSessionIdle(sessionName string) error {
 	return m.UpdateSessionStatus(sessionName, StatusIdle)
 }
 
 // SyncSessionStatus synchronizes session metadata with actual tmux state
 // This checks if the tmux session still exists and updates status accordingly
-func (m *Manager) SyncSessionStatus(sessionName string) error {
+func (m *SessionManager) SyncSessionStatus(sessionName string) error {
 	// Check if session still exists in tmux
 	exists, err := m.HasSession(sessionName)
 	if err != nil {

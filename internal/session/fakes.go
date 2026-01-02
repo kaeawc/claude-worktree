@@ -78,6 +78,7 @@ func (f *FakeMetadataStore) DeleteMetadata(sessionName string) error {
 	}
 
 	delete(f.data, sessionName)
+
 	return nil
 }
 
@@ -121,6 +122,7 @@ func (f *FakeMetadataStore) ExistsMetadata(sessionName string) bool {
 	defer f.mu.RUnlock()
 
 	_, ok := f.data[sessionName]
+
 	return ok
 }
 
@@ -139,6 +141,7 @@ func (f *FakeMetadataStore) UpdateStatus(sessionName string, status Status) erro
 	}
 
 	metadata.Status = status
+
 	return nil
 }
 
@@ -173,16 +176,16 @@ func (f *FakeMetadataStore) GetData() map[string]*Metadata {
 	defer f.mu.RUnlock()
 
 	// Return a copy to prevent external modification
-	copy := make(map[string]*Metadata, len(f.data))
+	dataCopy := make(map[string]*Metadata, len(f.data))
 	for k, v := range f.data {
-		copy[k] = v
+		dataCopy[k] = v
 	}
 
-	return copy
+	return dataCopy
 }
 
-// FakeSessionOperations is a fake implementation of SessionOperations
-type FakeSessionOperations struct {
+// FakeOperations is a fake implementation of SessionOperations
+type FakeOperations struct {
 	mu              sync.RWMutex
 	activeSessions  map[string]bool
 	attachedSession string
@@ -192,9 +195,9 @@ type FakeSessionOperations struct {
 	killCount       int
 }
 
-// NewFakeSessionOperations creates a new fake session operations
-func NewFakeSessionOperations(sessionType Type, available bool) *FakeSessionOperations {
-	return &FakeSessionOperations{
+// NewFakeOperations creates a new fake session operations
+func NewFakeOperations(sessionType Type, available bool) *FakeOperations {
+	return &FakeOperations{
 		activeSessions: make(map[string]bool),
 		attachErrors:   make(map[string]error),
 		sessionType:    sessionType,
@@ -203,7 +206,7 @@ func NewFakeSessionOperations(sessionType Type, available bool) *FakeSessionOper
 }
 
 // HasSession checks if session exists
-func (f *FakeSessionOperations) HasSession(name string) (bool, error) {
+func (f *FakeOperations) HasSession(name string) (bool, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 
@@ -211,11 +214,12 @@ func (f *FakeSessionOperations) HasSession(name string) (bool, error) {
 }
 
 // ListSessions lists all sessions
-func (f *FakeSessionOperations) ListSessions() ([]string, error) {
+func (f *FakeOperations) ListSessions() ([]string, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 
 	sessions := make([]string, 0, len(f.activeSessions))
+
 	for name, active := range f.activeSessions {
 		if active {
 			sessions = append(sessions, name)
@@ -226,7 +230,7 @@ func (f *FakeSessionOperations) ListSessions() ([]string, error) {
 }
 
 // KillSession kills a session
-func (f *FakeSessionOperations) KillSession(name string) error {
+func (f *FakeOperations) KillSession(name string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -237,7 +241,7 @@ func (f *FakeSessionOperations) KillSession(name string) error {
 }
 
 // AttachToSession attaches to a session
-func (f *FakeSessionOperations) AttachToSession(name string) error {
+func (f *FakeOperations) AttachToSession(name string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -246,11 +250,12 @@ func (f *FakeSessionOperations) AttachToSession(name string) error {
 	}
 
 	f.attachedSession = name
+
 	return nil
 }
 
 // SessionType returns the session type
-func (f *FakeSessionOperations) SessionType() Type {
+func (f *FakeOperations) SessionType() Type {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 
@@ -258,7 +263,7 @@ func (f *FakeSessionOperations) SessionType() Type {
 }
 
 // IsAvailable returns whether a session manager is available
-func (f *FakeSessionOperations) IsAvailable() bool {
+func (f *FakeOperations) IsAvailable() bool {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 
@@ -266,7 +271,7 @@ func (f *FakeSessionOperations) IsAvailable() bool {
 }
 
 // AddSession adds an active session for testing
-func (f *FakeSessionOperations) AddSession(name string) {
+func (f *FakeOperations) AddSession(name string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -274,7 +279,7 @@ func (f *FakeSessionOperations) AddSession(name string) {
 }
 
 // RemoveSession removes a session for testing
-func (f *FakeSessionOperations) RemoveSession(name string) {
+func (f *FakeOperations) RemoveSession(name string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -282,7 +287,7 @@ func (f *FakeSessionOperations) RemoveSession(name string) {
 }
 
 // GetAttachedSession returns the last attached session
-func (f *FakeSessionOperations) GetAttachedSession() string {
+func (f *FakeOperations) GetAttachedSession() string {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 
@@ -290,7 +295,7 @@ func (f *FakeSessionOperations) GetAttachedSession() string {
 }
 
 // GetKillCount returns the number of kill operations
-func (f *FakeSessionOperations) GetKillCount() int {
+func (f *FakeOperations) GetKillCount() int {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 
@@ -298,7 +303,7 @@ func (f *FakeSessionOperations) GetKillCount() int {
 }
 
 // SetAttachError sets an error for AttachToSession
-func (f *FakeSessionOperations) SetAttachError(sessionName string, err error) {
+func (f *FakeOperations) SetAttachError(sessionName string, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -377,8 +382,8 @@ func (f *FakeDependencyInstaller) GetProgressCalls() []string {
 	return calls
 }
 
-// FakeSessionCleaner is a fake implementation of SessionCleaner
-type FakeSessionCleaner struct {
+// FakeCleaner is a fake implementation of SessionCleaner
+type FakeCleaner struct {
 	mu                    sync.RWMutex
 	cleanupResult         *CleanupResult
 	cleanupError          error
@@ -386,15 +391,15 @@ type FakeSessionCleaner struct {
 	cleanupCalledWithOpts *CleanupOptions
 }
 
-// NewFakeSessionCleaner creates a new fake cleaner
-func NewFakeSessionCleaner() *FakeSessionCleaner {
-	return &FakeSessionCleaner{
+// NewFakeCleaner creates a new fake cleaner
+func NewFakeCleaner() *FakeCleaner {
+	return &FakeCleaner{
 		cleanupResult: &CleanupResult{},
 	}
 }
 
 // CleanupOrphanedSessions cleans up orphaned sessions
-func (f *FakeSessionCleaner) CleanupOrphanedSessions(opts *CleanupOptions) (*CleanupResult, error) {
+func (f *FakeCleaner) CleanupOrphanedSessions(opts *CleanupOptions) (*CleanupResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -410,7 +415,7 @@ func (f *FakeSessionCleaner) CleanupOrphanedSessions(opts *CleanupOptions) (*Cle
 }
 
 // CleanupOrphanedMetadataFiles cleans up orphaned metadata files
-func (f *FakeSessionCleaner) CleanupOrphanedMetadataFiles(opts *CleanupOptions) error {
+func (f *FakeCleaner) CleanupOrphanedMetadataFiles(_ *CleanupOptions) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -418,7 +423,7 @@ func (f *FakeSessionCleaner) CleanupOrphanedMetadataFiles(opts *CleanupOptions) 
 }
 
 // SetCleanupResult sets the result to return
-func (f *FakeSessionCleaner) SetCleanupResult(result *CleanupResult) {
+func (f *FakeCleaner) SetCleanupResult(result *CleanupResult) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -426,7 +431,7 @@ func (f *FakeSessionCleaner) SetCleanupResult(result *CleanupResult) {
 }
 
 // SetCleanupError sets the error to return
-func (f *FakeSessionCleaner) SetCleanupError(err error) {
+func (f *FakeCleaner) SetCleanupError(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -434,7 +439,7 @@ func (f *FakeSessionCleaner) SetCleanupError(err error) {
 }
 
 // GetCleanupCalledWithOpts returns the options passed to cleanup
-func (f *FakeSessionCleaner) GetCleanupCalledWithOpts() *CleanupOptions {
+func (f *FakeCleaner) GetCleanupCalledWithOpts() *CleanupOptions {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 
@@ -463,6 +468,7 @@ func (f *FakeFileSystem) ReadDir(name string) ([]os.DirEntry, error) {
 	defer f.mu.RUnlock()
 
 	var entries []os.DirEntry
+
 	for path := range f.files {
 		if filepath.Dir(path) == name && f.files[path] {
 			entries = append(entries, &fakeDirEntry{
@@ -470,6 +476,7 @@ func (f *FakeFileSystem) ReadDir(name string) ([]os.DirEntry, error) {
 			})
 		}
 	}
+
 	return entries, nil
 }
 
@@ -485,6 +492,7 @@ func (f *FakeFileSystem) Remove(name string) error {
 	}
 
 	delete(f.files, name)
+
 	return nil
 }
 
@@ -511,6 +519,7 @@ func (f *FakeFileSystem) SetRemoveError(path string, err error) {
 func (f *FakeFileSystem) GetRemoveCount() int {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
+
 	return f.removeCount
 }
 

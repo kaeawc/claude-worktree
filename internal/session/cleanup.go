@@ -55,6 +55,7 @@ func isMetadataFile(entry os.DirEntry) bool {
 	if entry.IsDir() {
 		return false
 	}
+
 	return filepath.Ext(entry.Name()) == ".json"
 }
 
@@ -63,6 +64,7 @@ func extractSessionName(filename string) string {
 	if !strings.HasSuffix(filename, ".json") {
 		return ""
 	}
+
 	return filename[:len(filename)-5]
 }
 
@@ -75,8 +77,9 @@ type sessionClassification struct {
 }
 
 // classifySession determines the current state of a session
-func (m *Manager) classifySession(metadata *Metadata) sessionClassification {
+func (m *SessionManager) classifySession(metadata *Metadata) sessionClassification {
 	exists, err := m.HasSession(metadata.SessionName)
+
 	return sessionClassification{
 		exists:   exists,
 		isIdle:   metadata.Status == StatusIdle,
@@ -86,7 +89,7 @@ func (m *Manager) classifySession(metadata *Metadata) sessionClassification {
 }
 
 // processOrphanedSession handles cleanup for a single orphaned session
-func (m *Manager) processOrphanedSession(metadata *Metadata, opts *CleanupOptions) error {
+func (m *SessionManager) processOrphanedSession(metadata *Metadata, opts *CleanupOptions) error {
 	opts.OnProgress(fmt.Sprintf("Found orphaned session: %s", metadata.SessionName))
 
 	if !opts.RemoveOrphanedMetadata || opts.DryRun {
@@ -98,6 +101,7 @@ func (m *Manager) processOrphanedSession(metadata *Metadata, opts *CleanupOption
 	}
 
 	opts.OnProgress(fmt.Sprintf("Removed metadata for orphaned session: %s", metadata.SessionName))
+
 	return nil
 }
 
@@ -105,11 +109,12 @@ func (m *Manager) processOrphanedSession(metadata *Metadata, opts *CleanupOption
 func isSessionIdle(metadata *Metadata, idleThresholdMinutes int) bool {
 	idleDuration := time.Since(metadata.LastAccessedAt)
 	idleThreshold := time.Duration(idleThresholdMinutes) * time.Minute
+
 	return idleDuration > idleThreshold
 }
 
 // processActiveSession handles idle detection for an active session
-func (m *Manager) processActiveSession(metadata *Metadata, opts *CleanupOptions) error {
+func (m *SessionManager) processActiveSession(metadata *Metadata, opts *CleanupOptions) error {
 	// Early return if idle marking is disabled or already idle/failed
 	if !opts.MarkIdleAsIdle || metadata.Status == StatusIdle || metadata.Status == StatusFailed {
 		return nil
@@ -131,11 +136,12 @@ func (m *Manager) processActiveSession(metadata *Metadata, opts *CleanupOptions)
 	}
 
 	opts.OnProgress(fmt.Sprintf("Marked as idle: %s", metadata.SessionName))
+
 	return nil
 }
 
 // processMetadataFile processes a single metadata file for cleanup
-func (m *Manager) processMetadataFile(entry os.DirEntry, sessionDir string, opts *CleanupOptions, fs FileSystem) error {
+func (m *SessionManager) processMetadataFile(entry os.DirEntry, sessionDir string, opts *CleanupOptions, fs FileSystem) error {
 	sessionName := extractSessionName(entry.Name())
 	if sessionName == "" {
 		return nil
@@ -167,7 +173,7 @@ func (m *Manager) processMetadataFile(entry os.DirEntry, sessionDir string, opts
 }
 
 // processSingleMetadata processes a single metadata entry and updates results
-func (m *Manager) processSingleMetadata(metadata *Metadata, opts *CleanupOptions, result *CleanupResult) {
+func (m *SessionManager) processSingleMetadata(metadata *Metadata, opts *CleanupOptions, result *CleanupResult) {
 	classification := m.classifySession(metadata)
 
 	if classification.checkErr != nil {
@@ -181,9 +187,11 @@ func (m *Manager) processSingleMetadata(metadata *Metadata, opts *CleanupOptions
 			result.Errors = append(result.Errors, err)
 			return
 		}
+
 		if !opts.DryRun && opts.RemoveOrphanedMetadata {
 			result.RemovedMetadata = append(result.RemovedMetadata, metadata.SessionName)
 		}
+
 		return
 	}
 
@@ -196,13 +204,14 @@ func (m *Manager) processSingleMetadata(metadata *Metadata, opts *CleanupOptions
 	if classification.isIdle {
 		result.IdleSessions++
 	}
+
 	if classification.isFailed {
 		result.FailedSessions++
 	}
 }
 
 // CleanupOrphanedSessions cleans up metadata for sessions that no longer exist
-func (m *Manager) CleanupOrphanedSessions(opts *CleanupOptions) (*CleanupResult, error) {
+func (m *SessionManager) CleanupOrphanedSessions(opts *CleanupOptions) (*CleanupResult, error) {
 	if opts == nil {
 		opts = DefaultCleanupOptions()
 	}
@@ -231,7 +240,7 @@ func (m *Manager) CleanupOrphanedSessions(opts *CleanupOptions) (*CleanupResult,
 }
 
 // cleanupOrphanedMetadataFilesWithFS is the testable implementation using an injected FileSystem
-func (m *Manager) cleanupOrphanedMetadataFilesWithFS(opts *CleanupOptions, fs FileSystem) error {
+func (m *SessionManager) cleanupOrphanedMetadataFilesWithFS(opts *CleanupOptions, fs FileSystem) error {
 	if opts == nil {
 		opts = DefaultCleanupOptions()
 	}
@@ -250,6 +259,7 @@ func (m *Manager) cleanupOrphanedMetadataFilesWithFS(opts *CleanupOptions, fs Fi
 		if os.IsNotExist(err) {
 			return nil
 		}
+
 		return err
 	}
 
@@ -258,9 +268,8 @@ func (m *Manager) cleanupOrphanedMetadataFilesWithFS(opts *CleanupOptions, fs Fi
 			continue
 		}
 
-		if err := m.processMetadataFile(entry, sessionDir, opts, fs); err != nil {
-			// Errors are logged via OnProgress but cleanup continues
-		}
+		_ = m.processMetadataFile(entry, sessionDir, opts, fs) //nolint:errcheck // Errors logged via OnProgress
+		// Errors are logged via OnProgress but cleanup continues
 	}
 
 	return nil
@@ -268,6 +277,6 @@ func (m *Manager) cleanupOrphanedMetadataFilesWithFS(opts *CleanupOptions, fs Fi
 
 // CleanupOrphanedMetadataFiles removes orphaned metadata files from disk
 // This is useful if the metadata directory somehow contains files without corresponding sessions
-func (m *Manager) CleanupOrphanedMetadataFiles(opts *CleanupOptions) error {
+func (m *SessionManager) CleanupOrphanedMetadataFiles(opts *CleanupOptions) error {
 	return m.cleanupOrphanedMetadataFilesWithFS(opts, newRealFileSystem())
 }

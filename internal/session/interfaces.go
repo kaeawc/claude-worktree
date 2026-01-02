@@ -79,8 +79,8 @@ type MetadataStore interface {
 	UpdateStatus(sessionName string, status Status) error
 }
 
-// SessionOperations defines the interface for session operations
-type SessionOperations interface {
+// Operations defines the interface for session operations
+type Operations interface {
 	// HasSession checks if a session exists
 	HasSession(name string) (bool, error)
 
@@ -100,8 +100,8 @@ type SessionOperations interface {
 	IsAvailable() bool
 }
 
-// SessionMetadataManager defines the interface for session metadata management
-type SessionMetadataManager interface {
+// MetadataManager defines the interface for session metadata management
+type MetadataManager interface {
 	// SaveSessionMetadata saves metadata for a session
 	SaveSessionMetadata(metadata *Metadata) error
 
@@ -139,10 +139,10 @@ type SessionMetadataManager interface {
 	SyncSessionStatus(sessionName string) error
 }
 
-// SessionManager combines all session operations
-type SessionManager interface {
-	SessionOperations
-	SessionMetadataManager
+// Manager combines all session operations
+type Manager interface {
+	Operations
+	MetadataManager
 
 	// CreateSession creates a new detached session with optional command
 	CreateSession(name, workingDir string, command []string) error
@@ -154,8 +154,8 @@ type DependencyInstaller interface {
 	Install(worktreePath string, onProgress func(string)) (*DependenciesInfo, error)
 }
 
-// SessionCleaner defines the interface for cleaning up sessions
-type SessionCleaner interface {
+// Cleaner defines the interface for cleaning up sessions
+type Cleaner interface {
 	// CleanupOrphanedSessions cleans up metadata for sessions that no longer exist
 	CleanupOrphanedSessions(opts *CleanupOptions) (*CleanupResult, error)
 

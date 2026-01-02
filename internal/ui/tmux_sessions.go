@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/kaeawc/auto-worktree/internal/session"
 )
 
@@ -101,6 +102,7 @@ func (m SessionListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		h, v := BoxStyle.GetFrameSize()
 		m.list.SetSize(msg.Width-h, msg.Height-v)
+
 		return m, nil
 
 	case tea.KeyMsg:
@@ -110,10 +112,13 @@ func (m SessionListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Exit filter mode
 				m.filtering = false
 				m.list.SetShowFilter(false)
+
 				return m, nil
 			}
+
 			// Quit
 			m.err = fmt.Errorf("canceled")
+
 			return m, tea.Quit
 
 		case "enter":
@@ -122,15 +127,18 @@ func (m SessionListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if selectedItem != nil {
 				if item, ok := selectedItem.(SessionListItem); ok {
 					m.choice = &item
+
 					return m, tea.Quit
 				}
 			}
+
 			return m, nil
 
 		case "/":
 			// Toggle filter mode
 			m.filtering = !m.filtering
 			m.list.SetShowFilter(m.filtering)
+
 			if m.filtering {
 				m.list.ResetFilter()
 			}
@@ -138,6 +146,7 @@ func (m SessionListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	m.list, _ = m.list.Update(msg)
+
 	return m, nil
 }
 
@@ -188,14 +197,20 @@ func formatDuration(d time.Duration) string {
 	if d < time.Minute {
 		return "just now"
 	}
+
 	if d < time.Hour {
 		minutes := int(d.Minutes())
+
 		return fmt.Sprintf("%dm", minutes)
 	}
+
 	if d < 24*time.Hour {
 		hours := int(d.Hours())
+
 		return fmt.Sprintf("%dh", hours)
 	}
+
 	days := int(d.Hours()) / 24
+
 	return fmt.Sprintf("%dd", days)
 }

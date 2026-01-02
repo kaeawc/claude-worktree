@@ -74,6 +74,7 @@ func GetSessionDir() (string, error) {
 	}
 
 	sessionsDir := filepath.Join(home, ".auto-worktree", "sessions")
+
 	return sessionsDir, nil
 }
 
@@ -123,11 +124,13 @@ func (s *FileMetadataStore) LoadMetadata(sessionName string) (*Metadata, error) 
 	defer s.mu.RUnlock()
 
 	path := s.metadataPath(sessionName)
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // G304: Path is derived from sessionName parameter
+
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("metadata not found for session: %s", sessionName)
 		}
+
 		return nil, fmt.Errorf("failed to read metadata: %w", err)
 	}
 
@@ -158,14 +161,17 @@ func (s *FileMetadataStore) ListMetadata() ([]string, error) {
 	defer s.mu.RUnlock()
 
 	entries, err := os.ReadDir(s.baseDir)
+
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []string{}, nil
 		}
+
 		return nil, fmt.Errorf("failed to list metadata: %w", err)
 	}
 
 	var sessions []string
+
 	for _, entry := range entries {
 		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".json" {
 			sessionName := entry.Name()[:len(entry.Name())-5] // Remove .json
@@ -184,12 +190,15 @@ func (s *FileMetadataStore) LoadAllMetadata() ([]*Metadata, error) {
 	}
 
 	metadataList := make([]*Metadata, 0, len(sessionNames))
+
 	for _, sessionName := range sessionNames {
 		metadata, err := s.LoadMetadata(sessionName)
+
 		if err != nil {
 			// Skip corrupted metadata files
 			continue
 		}
+
 		metadataList = append(metadataList, metadata)
 	}
 
@@ -203,6 +212,7 @@ func (s *FileMetadataStore) ExistsMetadata(sessionName string) bool {
 
 	path := s.metadataPath(sessionName)
 	_, err := os.Stat(path)
+
 	return err == nil
 }
 
@@ -214,5 +224,6 @@ func (s *FileMetadataStore) UpdateStatus(sessionName string, status Status) erro
 	}
 
 	metadata.Status = status
+
 	return s.SaveMetadata(metadata)
 }

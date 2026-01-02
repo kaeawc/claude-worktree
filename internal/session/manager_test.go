@@ -9,7 +9,7 @@ import (
 func TestManager_SaveAndLoadSessionMetadata(t *testing.T) {
 	// Create a manager with fake metadata store
 	fakeStore := NewFakeMetadataStore()
-	manager := &Manager{
+	manager := &SessionManager{
 		sessionType:   TypeTmux,
 		metadataStore: fakeStore,
 	}
@@ -48,7 +48,7 @@ func TestManager_SaveAndLoadSessionMetadata(t *testing.T) {
 
 func TestManager_PauseSession(t *testing.T) {
 	fakeStore := NewFakeMetadataStore()
-	manager := &Manager{
+	manager := &SessionManager{
 		sessionType:   TypeTmux,
 		metadataStore: fakeStore,
 	}
@@ -74,7 +74,7 @@ func TestManager_PauseSession(t *testing.T) {
 
 func TestManager_ResumeSession(t *testing.T) {
 	fakeStore := NewFakeMetadataStore()
-	manager := &Manager{
+	manager := &SessionManager{
 		sessionType:   TypeTmux,
 		metadataStore: fakeStore,
 	}
@@ -100,7 +100,7 @@ func TestManager_ResumeSession(t *testing.T) {
 
 func TestManager_DeleteSessionMetadata(t *testing.T) {
 	fakeStore := NewFakeMetadataStore()
-	manager := &Manager{
+	manager := &SessionManager{
 		sessionType:   TypeTmux,
 		metadataStore: fakeStore,
 	}
@@ -118,16 +118,14 @@ func TestManager_DeleteSessionMetadata(t *testing.T) {
 	}
 
 	// Verify it was deleted
-	if !fakeStore.ExistsMetadata("test-delete") {
-		// Good, it's deleted
-	} else {
+	if fakeStore.ExistsMetadata("test-delete") {
 		t.Errorf("metadata should be deleted")
 	}
 }
 
 func TestManager_ListSessionMetadata(t *testing.T) {
 	fakeStore := NewFakeMetadataStore()
-	manager := &Manager{
+	manager := &SessionManager{
 		sessionType:   TypeTmux,
 		metadataStore: fakeStore,
 	}
@@ -154,7 +152,7 @@ func TestManager_ListSessionMetadata(t *testing.T) {
 
 func TestManager_GetSessionStatus(t *testing.T) {
 	fakeStore := NewFakeMetadataStore()
-	manager := &Manager{
+	manager := &SessionManager{
 		sessionType:   TypeTmux,
 		metadataStore: fakeStore,
 	}
@@ -179,7 +177,7 @@ func TestManager_GetSessionStatus(t *testing.T) {
 
 func TestManager_MarkSessionFailed(t *testing.T) {
 	fakeStore := NewFakeMetadataStore()
-	manager := &Manager{
+	manager := &SessionManager{
 		sessionType:   TypeTmux,
 		metadataStore: fakeStore,
 	}
@@ -205,7 +203,7 @@ func TestManager_MarkSessionFailed(t *testing.T) {
 
 func TestManager_MarkSessionIdle(t *testing.T) {
 	fakeStore := NewFakeMetadataStore()
-	manager := &Manager{
+	manager := &SessionManager{
 		sessionType:   TypeTmux,
 		metadataStore: fakeStore,
 	}
@@ -231,10 +229,10 @@ func TestManager_MarkSessionIdle(t *testing.T) {
 
 func TestManager_SyncSessionStatus_SessionExists(t *testing.T) {
 	fakeStore := NewFakeMetadataStore()
-	fakeOps := NewFakeSessionOperations(TypeTmux, true)
+	fakeOps := NewFakeOperations(TypeTmux, true)
 	fakeOps.AddSession("test-sync")
 
-	manager := &Manager{
+	manager := &SessionManager{
 		sessionType:   TypeTmux,
 		metadataStore: fakeStore,
 	}
@@ -257,7 +255,7 @@ func TestManager_SyncSessionStatus_SessionExists(t *testing.T) {
 
 func TestManager_LoadAllSessionMetadata(t *testing.T) {
 	fakeStore := NewFakeMetadataStore()
-	manager := &Manager{
+	manager := &SessionManager{
 		sessionType:   TypeTmux,
 		metadataStore: fakeStore,
 	}
@@ -284,7 +282,7 @@ func TestManager_LoadAllSessionMetadata(t *testing.T) {
 }
 
 func TestManager_MetadataStore_NilHandling(t *testing.T) {
-	manager := &Manager{
+	manager := &SessionManager{
 		sessionType:   TypeTmux,
 		metadataStore: nil,
 	}
@@ -298,7 +296,7 @@ func TestManager_MetadataStore_NilHandling(t *testing.T) {
 
 func TestManager_UpdateSessionStatus(t *testing.T) {
 	fakeStore := NewFakeMetadataStore()
-	manager := &Manager{
+	manager := &SessionManager{
 		sessionType:   TypeTmux,
 		metadataStore: fakeStore,
 	}
@@ -346,8 +344,8 @@ func TestFakeMetadataStore_ErrorHandling(t *testing.T) {
 	}
 }
 
-func TestFakeSessionOperations_SessionTracking(t *testing.T) {
-	fakeOps := NewFakeSessionOperations(TypeTmux, true)
+func TestFakeOperations_SessionTracking(t *testing.T) {
+	fakeOps := NewFakeOperations(TypeTmux, true)
 
 	// Add a session
 	fakeOps.AddSession("test-session")
@@ -374,8 +372,8 @@ func TestFakeSessionOperations_SessionTracking(t *testing.T) {
 	}
 }
 
-func TestFakeSessionOperations_Attachment(t *testing.T) {
-	fakeOps := NewFakeSessionOperations(TypeTmux, true)
+func TestFakeOperations_Attachment(t *testing.T) {
+	fakeOps := NewFakeOperations(TypeTmux, true)
 
 	// Add a session
 	fakeOps.AddSession("test-attach")
@@ -428,8 +426,8 @@ func TestFakeDependencyInstaller_ProgressTracking(t *testing.T) {
 	}
 }
 
-func TestFakeSessionCleaner_CleanupResult(t *testing.T) {
-	fakeCleaner := NewFakeSessionCleaner()
+func TestFakeCleaner_CleanupResult(t *testing.T) {
+	fakeCleaner := NewFakeCleaner()
 
 	// Set result
 	result := &CleanupResult{

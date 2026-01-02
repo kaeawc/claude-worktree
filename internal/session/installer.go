@@ -38,6 +38,7 @@ func InstallDependencies(metadata *Metadata, onProgress func(string)) error {
 	// Detect and record the project type and package manager
 	detector := environment.NewDetector("")
 	result, err := detector.Detect(metadata.WorktreePath)
+
 	if err != nil {
 		progressCallback(fmt.Sprintf("Note: Could not detect project type: %v", err))
 		return nil // Don't fail on detection errors
@@ -51,6 +52,7 @@ func InstallDependencies(metadata *Metadata, onProgress func(string)) error {
 			PackageManager: string(result.PackageManager),
 			InstalledAt:    &now,
 		}
+
 		progressCallback(fmt.Sprintf("Installed dependencies using %s", result.PackageManager))
 	}
 

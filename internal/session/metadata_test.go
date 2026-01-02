@@ -47,9 +47,9 @@ func TestMetadataStore_SaveAndLoadMetadata(t *testing.T) {
 	}
 
 	// Load metadata
-	loaded, err := store.LoadMetadata("test-session")
-	if err != nil {
-		t.Fatalf("failed to load metadata: %v", err)
+	loaded, loadErr := store.LoadMetadata("test-session")
+	if loadErr != nil {
+		t.Fatalf("failed to load metadata: %v", loadErr)
 	}
 
 	// Verify metadata

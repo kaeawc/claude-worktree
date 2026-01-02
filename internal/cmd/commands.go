@@ -15,6 +15,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/google/uuid"
+
 	"github.com/kaeawc/auto-worktree/internal/ai"
 	"github.com/kaeawc/auto-worktree/internal/environment"
 	"github.com/kaeawc/auto-worktree/internal/git"
@@ -79,7 +80,7 @@ func showInteractiveMenu() (bool, error) {
 	return false, err
 }
 
-func routeMenuChoice(choice string, returnToMenu bool) error {
+func routeMenuChoice(choice string, _ bool) error {
 	var err error
 
 	switch choice {
@@ -1768,7 +1769,7 @@ func generateUUID() string {
 }
 
 // createSessionWithMetadata creates a tmux session and saves metadata
-func createSessionWithMetadata(sessionMgr session.SessionManager, config *git.Config, sessionName, branchName, worktreePath string, command []string) error {
+func createSessionWithMetadata(sessionMgr session.Manager, config *git.Config, sessionName, branchName, worktreePath string, command []string) error {
 	// Create the actual tmux session
 	if err := sessionMgr.CreateSession(sessionName, worktreePath, command); err != nil {
 		return fmt.Errorf("failed to create session: %w", err)
