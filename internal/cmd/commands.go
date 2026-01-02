@@ -83,7 +83,8 @@ func RunList() error {
 		return fmt.Errorf("error: %w", err)
 	}
 
-	worktrees, err := repo.ListWorktrees()
+	// Use ListWorktreesWithMergeStatus to get merge status information
+	worktrees, err := repo.ListWorktreesWithMergeStatus()
 	if err != nil {
 		return fmt.Errorf("error listing worktrees: %w", err)
 	}
@@ -95,8 +96,8 @@ func RunList() error {
 
 	fmt.Printf("Repository: %s\n", repo.SourceFolder)
 	fmt.Printf("Worktree base: %s\n\n", repo.WorktreeBase)
-	fmt.Printf("%-50s %-25s %-15s %s\n", "PATH", "BRANCH", "AGE", "UNPUSHED")
-	fmt.Println(strings.Repeat("-", 110))
+	fmt.Printf("%-45s %-20s %-12s %-12s %s\n", "PATH", "BRANCH", "AGE", "STATUS", "UNPUSHED")
+	fmt.Println(strings.Repeat("-", 120))
 
 	for _, wt := range worktrees {
 		path := wt.Path
@@ -116,16 +117,34 @@ func RunList() error {
 		}
 
 		// Truncate path if too long
-		if len(path) > 48 {
-			path = "..." + path[len(path)-45:]
+		if len(path) > 43 {
+			path = "..." + path[len(path)-40:]
 		}
 
-		fmt.Printf("%-50s %-25s %-15s %s\n", path, branch, age, unpushed)
+		// Get status indicator
+		status := getStatusIndicator(wt)
+
+		fmt.Printf("%-45s %-20s %-12s %-12s %s\n", path, branch, age, status, unpushed)
 	}
 
 	fmt.Printf("\nTotal: %d worktree(s)\n", len(worktrees))
 
 	return nil
+}
+
+// getStatusIndicator returns a status string for the worktree
+func getStatusIndicator(wt *git.Worktree) string {
+	if wt.IsMerged() {
+		return "[merged]"
+	}
+	if wt.IsStale() {
+		days := int(wt.Age().Hours() / 24)
+		return fmt.Sprintf("[stale %dd]", days)
+	}
+	if wt.IsBranchMerged {
+		return "[git-merged]"
+	}
+	return "-"
 }
 
 // RunNew creates a new worktree.
@@ -378,8 +397,166 @@ func RunPR(_ string) error {
 
 // RunCleanup performs interactive cleanup.
 func RunCleanup() error {
-	// TODO: Implement cleanup workflow
-	return fmt.Errorf("'cleanup' command not yet implemented")
+	repo, err := git.NewRepository()
+	if err != nil {
+		return fmt.Errorf("error: %w", err)
+	}
+
+	// Get cleanup candidates (merged first, then stale)
+	candidates, err := repo.GetCleanupCandidates()
+	if err != nil {
+		return fmt.Errorf("error finding cleanup candidates: %w", err)
+	}
+
+	if len(candidates) == 0 {
+		fmt.Println("No worktrees found that need cleanup.")
+		return nil
+	}
+
+	// Separate merged and stale
+	merged, stale := categorizeWorktrees(candidates)
+
+	// Process merged worktrees (automatic with confirmation)
+	if err := processMergedWorktrees(repo, merged, stale); err != nil {
+		return err
+	}
+
+	// Process stale worktrees (interactive)
+	processStaleWorktrees(repo, stale)
+
+	fmt.Println("\nCleanup complete!")
+	return nil
+}
+
+// categorizeWorktrees separates worktrees into merged and stale categories
+func categorizeWorktrees(candidates []*git.Worktree) ([]*git.Worktree, []*git.Worktree) {
+	var merged, stale []*git.Worktree
+	for _, wt := range candidates {
+		if wt.IsMerged() {
+			merged = append(merged, wt)
+		} else if wt.IsStale() {
+			stale = append(stale, wt)
+		}
+	}
+	return merged, stale
+}
+
+// processMergedWorktrees handles automatic cleanup of merged worktrees with confirmation
+func processMergedWorktrees(repo *git.Repository, merged, stale []*git.Worktree) error {
+	if len(merged) == 0 {
+		return nil
+	}
+
+	// Show confirmation prompt
+	if !confirmCleanup(len(merged), len(stale)) {
+		return nil
+	}
+
+	// Clean up merged worktrees
+	fmt.Printf("\nCleaning up %d merged worktree(s)...\n\n", len(merged))
+	for _, wt := range merged {
+		if err := cleanupWorktree(repo, wt, true); err != nil {
+			fmt.Printf("  Error cleaning up %s: %v\n", wt.Path, err)
+			continue
+		}
+		fmt.Printf("  ✓ Removed %s (%s)\n", wt.Path, wt.CleanupReason())
+	}
+
+	return nil
+}
+
+// confirmCleanup shows confirmation dialog and returns user's choice
+func confirmCleanup(mergedCount, staleCount int) bool {
+	confirmation := ui.NewCleanupConfirmation(mergedCount, staleCount)
+	p := tea.NewProgram(confirmation)
+
+	m, err := p.Run()
+	if err != nil {
+		fmt.Printf("Error showing confirmation: %v\n", err)
+		return false
+	}
+
+	finalModel, ok := m.(ui.CleanupConfirmationModel)
+	if !ok {
+		return false
+	}
+
+	if finalModel.WasCanceled() {
+		fmt.Println("Cleanup canceled")
+		return false
+	}
+
+	return finalModel.WasConfirmed()
+}
+
+// processStaleWorktrees handles interactive cleanup of stale worktrees
+func processStaleWorktrees(repo *git.Repository, stale []*git.Worktree) {
+	if len(stale) == 0 {
+		return
+	}
+
+	fmt.Printf("\nInteractive cleanup for %d stale worktree(s)...\n\n", len(stale))
+	for _, wt := range stale {
+		if err := interactiveCleanup(repo, wt); err != nil {
+			fmt.Printf("  Error: %v\n", err)
+		}
+	}
+}
+
+// interactiveCleanup prompts the user to clean up a worktree
+func interactiveCleanup(repo *git.Repository, wt *git.Worktree) error {
+	prompt := ui.NewCleanupPrompt(wt.Path, wt.Branch, wt.CleanupReason(), wt.UnpushedCount, true)
+	p := tea.NewProgram(prompt)
+
+	m, err := p.Run()
+	if err != nil {
+		return fmt.Errorf("error showing prompt: %w", err)
+	}
+
+	finalModel, ok := m.(ui.CleanupPromptModel)
+	if !ok {
+		return fmt.Errorf("unexpected model type")
+	}
+
+	if finalModel.WasCanceled() {
+		fmt.Println("  Skipped")
+		return nil
+	}
+
+	if !finalModel.WasConfirmed() {
+		fmt.Println("  Skipped")
+		return nil
+	}
+
+	// Clean up the worktree
+	if err := cleanupWorktree(repo, wt, finalModel.ShouldDeleteBranch()); err != nil {
+		return err
+	}
+
+	fmt.Printf("  ✓ Removed %s\n", wt.Path)
+	if finalModel.ShouldDeleteBranch() && wt.Branch != "" {
+		fmt.Printf("  ✓ Deleted branch %s\n", wt.Branch)
+	}
+
+	return nil
+}
+
+// cleanupWorktree removes a worktree and optionally deletes its branch
+func cleanupWorktree(repo *git.Repository, wt *git.Worktree, deleteBranch bool) error {
+	// Remove the worktree
+	if err := repo.RemoveWorktree(wt.Path); err != nil {
+		return fmt.Errorf("failed to remove worktree: %w", err)
+	}
+
+	// Delete the branch if requested
+	if deleteBranch && wt.Branch != "" {
+		if err := repo.DeleteBranch(wt.Branch); err != nil {
+			// Don't fail the cleanup if branch deletion fails
+			fmt.Printf("  Warning: failed to delete branch %s: %v\n", wt.Branch, err)
+		}
+	}
+
+	return nil
 }
 
 // RunSettings shows settings menu.

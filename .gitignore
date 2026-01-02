@@ -2,6 +2,7 @@
 
 # Go build artifacts
 build/
+bin/
 *.exe
 *.exe~
 *.dll

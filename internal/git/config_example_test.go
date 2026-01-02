@@ -129,7 +129,7 @@ func ExampleConfig_defaults() {
 	fmt.Printf("Run Hooks (default): %v\n", runHooks)
 
 	// These helper methods have built-in defaults
-	fmt.Printf("GetRunHooks(): %v\n", repo.Config.GetRunHooks())             // defaults to true
+	fmt.Printf("GetRunHooks(): %v\n", repo.Config.GetRunHooks())               // defaults to true
 	fmt.Printf("GetFailOnHookError(): %v\n", repo.Config.GetFailOnHookError()) // defaults to false
 }
 
