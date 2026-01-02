@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -70,9 +71,9 @@ func (m *Manager) CreateSession(name, workingDir string, command []string) error
 func (m *Manager) createTmuxSession(name, workingDir string, command []string) error {
 	args := []string{
 		"new-session",
-		"-d",              // Detached
-		"-s", name,        // Session name
-		"-c", workingDir,  // Working directory
+		"-d",       // Detached
+		"-s", name, // Session name
+		"-c", workingDir, // Working directory
 	}
 	args = append(args, command...)
 
