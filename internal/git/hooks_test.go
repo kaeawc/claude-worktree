@@ -307,7 +307,12 @@ func TestHookManager_ExecuteWorktreeHooks(t *testing.T) {
 			fakeHook := NewFakeHookExecutor()
 			fakeHook.IsExecutableFunc = func(path string) bool {
 				for _, hookPath := range tt.executableHooks {
-					if path == hookPath {
+					// Check exact match or with Windows extensions
+					if path == hookPath ||
+						path == hookPath+".bat" ||
+						path == hookPath+".cmd" ||
+						path == hookPath+".exe" ||
+						path == hookPath+".ps1" {
 						return true
 					}
 				}
@@ -453,7 +458,12 @@ func TestHookManager_PathEnvironment(t *testing.T) {
 
 	fakeHook := NewFakeHookExecutor()
 	fakeHook.IsExecutableFunc = func(path string) bool {
-		return path == "/test/repo/.git/hooks/post-checkout"
+		// Check exact match or with Windows extensions
+		return path == "/test/repo/.git/hooks/post-checkout" ||
+			path == "/test/repo/.git/hooks/post-checkout.bat" ||
+			path == "/test/repo/.git/hooks/post-checkout.cmd" ||
+			path == "/test/repo/.git/hooks/post-checkout.exe" ||
+			path == "/test/repo/.git/hooks/post-checkout.ps1"
 	}
 
 	output := &bytes.Buffer{}
