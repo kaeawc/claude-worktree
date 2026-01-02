@@ -25,6 +25,24 @@ type Worktree struct {
 	LastCommitTime time.Time
 	// UnpushedCount is the number of unpushed commits
 	UnpushedCount int
+	// IsBranchMerged indicates if the branch has been merged into the default branch
+	IsBranchMerged bool
+	// IssueStatus holds the status from external providers (GitHub, JIRA, etc.)
+	IssueStatus *IssueStatus
+}
+
+// IssueStatus represents the status of an issue or PR from external providers
+type IssueStatus struct {
+	// Provider is the name of the provider (github, gitlab, jira, linear)
+	Provider string
+	// ID is the issue/PR identifier
+	ID string
+	// IsClosed indicates if the issue/PR is closed
+	IsClosed bool
+	// IsCompleted indicates if the issue/PR is merged/resolved/completed
+	IsCompleted bool
+	// Title is the issue/PR title (optional)
+	Title string
 }
 
 // ListWorktrees returns all worktrees for the repository
@@ -221,6 +239,47 @@ func getUnpushedCommitCount(path, branch string) (int, error) {
 // Age returns the duration since the last commit
 func (w *Worktree) Age() time.Duration {
 	return time.Since(w.LastCommitTime)
+}
+
+// IsStale returns true if the worktree is older than 4 days
+func (w *Worktree) IsStale() bool {
+	return w.Age() > 4*24*time.Hour
+}
+
+// IsMerged returns true if both the branch is merged AND the issue/PR is completed
+func (w *Worktree) IsMerged() bool {
+	// A worktree is considered merged if both:
+	// 1. The git branch has been merged into the default branch
+	// 2. The associated issue/PR is completed (if we have that info)
+
+	// If we don't have issue status, just check git merge status
+	if w.IssueStatus == nil {
+		return w.IsBranchMerged
+	}
+
+	// Both must be true for full merge confirmation
+	return w.IsBranchMerged && w.IssueStatus.IsCompleted
+}
+
+// ShouldCleanup returns true if the worktree is a candidate for cleanup
+// Either it's merged or it's stale
+func (w *Worktree) ShouldCleanup() bool {
+	return w.IsMerged() || w.IsStale()
+}
+
+// CleanupReason returns a string describing why this worktree should be cleaned up
+func (w *Worktree) CleanupReason() string {
+	if w.IsMerged() {
+		if w.IssueStatus != nil {
+			return fmt.Sprintf("merged (#%s)", w.IssueStatus.ID)
+		}
+		return "merged"
+	}
+	if w.IsStale() {
+		days := int(w.Age().Hours() / 24)
+		return fmt.Sprintf("stale (%d days old)", days)
+	}
+	return ""
 }
 
 // CreateWorktree creates a new worktree with an existing branch

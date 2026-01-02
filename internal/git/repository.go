@@ -155,3 +155,72 @@ func (r *Repository) DeleteBranch(branchName string) error {
 	}
 	return nil
 }
+
+// EnrichWorktreeWithMergeStatus adds merge status information to a worktree
+// This checks both git merge status and external provider status
+func (r *Repository) EnrichWorktreeWithMergeStatus(wt *Worktree) error {
+	// Skip if no branch (detached HEAD)
+	if wt.Branch == "" || wt.IsDetached {
+		return nil
+	}
+
+	// Get the default branch
+	defaultBranch, err := r.GetDefaultBranch()
+	if err != nil {
+		// If we can't get the default branch, continue without merge check
+		return nil
+	}
+
+	// Check if branch is merged into default branch
+	isMerged, err := IsBranchMergedInto(r.RootPath, wt.Branch, defaultBranch)
+	if err == nil {
+		wt.IsBranchMerged = isMerged
+	}
+
+	return nil
+}
+
+// ListWorktreesWithMergeStatus returns all worktrees enriched with merge status
+func (r *Repository) ListWorktreesWithMergeStatus() ([]*Worktree, error) {
+	worktrees, err := r.ListWorktrees()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, wt := range worktrees {
+		if err := r.EnrichWorktreeWithMergeStatus(wt); err != nil {
+			// Continue on error, just skip enrichment for this worktree
+			continue
+		}
+	}
+
+	return worktrees, nil
+}
+
+// GetCleanupCandidates returns worktrees that should be cleaned up
+// Returns merged worktrees first, then stale worktrees
+func (r *Repository) GetCleanupCandidates() ([]*Worktree, error) {
+	worktrees, err := r.ListWorktreesWithMergeStatus()
+	if err != nil {
+		return nil, err
+	}
+
+	var merged []*Worktree
+	var stale []*Worktree
+
+	for _, wt := range worktrees {
+		// Skip the main worktree (the repository root)
+		if wt.Path == r.RootPath {
+			continue
+		}
+
+		if wt.IsMerged() {
+			merged = append(merged, wt)
+		} else if wt.IsStale() {
+			stale = append(stale, wt)
+		}
+	}
+
+	// Return merged first, then stale
+	return append(merged, stale...), nil
+}
