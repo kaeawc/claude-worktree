@@ -3,7 +3,6 @@ package github
 import (
 	"errors"
 	"fmt"
-	"os/exec"
 )
 
 var (
@@ -19,18 +18,26 @@ type Client struct {
 	Owner string
 	// Repo is the repository name
 	Repo string
+	// executor handles gh CLI command execution
+	executor GitHubExecutor
 }
 
 // NewClient creates a GitHub client, auto-detecting repo from git remote
 // Returns error if gh CLI not installed or not authenticated
 func NewClient(gitRoot string) (*Client, error) {
+	executor := NewGitHubExecutor()
+	return NewClientWithExecutor(gitRoot, executor)
+}
+
+// NewClientWithExecutor creates a GitHub client with a custom executor (for testing)
+func NewClientWithExecutor(gitRoot string, executor GitHubExecutor) (*Client, error) {
 	// Check if gh CLI is installed
-	if !IsInstalled() {
+	if !IsInstalled(executor) {
 		return nil, ErrGHNotInstalled
 	}
 
 	// Check if gh is authenticated
-	if err := IsAuthenticated(); err != nil {
+	if err := IsAuthenticated(executor); err != nil {
 		return nil, err
 	}
 
@@ -41,40 +48,47 @@ func NewClient(gitRoot string) (*Client, error) {
 	}
 
 	return &Client{
-		Owner: info.Owner,
-		Repo:  info.Name,
+		Owner:    info.Owner,
+		Repo:     info.Name,
+		executor: executor,
 	}, nil
 }
 
 // NewClientWithRepo creates a client with explicit owner/repo
 func NewClientWithRepo(owner, repo string) (*Client, error) {
+	executor := NewGitHubExecutor()
+	return NewClientWithRepoAndExecutor(owner, repo, executor)
+}
+
+// NewClientWithRepoAndExecutor creates a client with explicit owner/repo and custom executor (for testing)
+func NewClientWithRepoAndExecutor(owner, repo string, executor GitHubExecutor) (*Client, error) {
 	// Check if gh CLI is installed
-	if !IsInstalled() {
+	if !IsInstalled(executor) {
 		return nil, ErrGHNotInstalled
 	}
 
 	// Check if gh is authenticated
-	if err := IsAuthenticated(); err != nil {
+	if err := IsAuthenticated(executor); err != nil {
 		return nil, err
 	}
 
 	return &Client{
-		Owner: owner,
-		Repo:  repo,
+		Owner:    owner,
+		Repo:     repo,
+		executor: executor,
 	}, nil
 }
 
 // IsInstalled checks if gh CLI is installed
-func IsInstalled() bool {
-	cmd := exec.Command("gh", "--version")
-	err := cmd.Run()
+func IsInstalled(executor GitHubExecutor) bool {
+	_, err := executor.Execute("--version")
 	return err == nil
 }
 
 // IsAuthenticated checks if gh CLI is authenticated
-func IsAuthenticated() error {
-	cmd := exec.Command("gh", "auth", "status")
-	if err := cmd.Run(); err != nil {
+func IsAuthenticated(executor GitHubExecutor) error {
+	_, err := executor.Execute("auth", "status")
+	if err != nil {
 		return ErrGHNotAuthenticated
 	}
 	return nil
@@ -82,12 +96,11 @@ func IsAuthenticated() error {
 
 // execGH executes a gh CLI command and returns output
 func (c *Client) execGH(args ...string) ([]byte, error) {
-	cmd := exec.Command("gh", args...)
-	output, err := cmd.CombinedOutput()
+	output, err := c.executor.Execute(args...)
 	if err != nil {
-		return nil, fmt.Errorf("gh command failed: %w\nOutput: %s", err, string(output))
+		return nil, err
 	}
-	return output, nil
+	return []byte(output), nil
 }
 
 // execGHInRepo executes a gh CLI command with repo context

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -29,6 +28,10 @@ type Worktree struct {
 	IsBranchMerged bool
 	// IssueStatus holds the status from external providers (GitHub, JIRA, etc.)
 	IssueStatus *IssueStatus
+	// executor is the git command executor for this worktree
+	executor GitExecutor
+	// TODO: Add FileSystem field once the FileSystem interface is created
+	// filesystem FileSystem
 }
 
 // IssueStatus represents the status of an issue or PR from external providers
@@ -47,18 +50,16 @@ type IssueStatus struct {
 
 // ListWorktrees returns all worktrees for the repository
 func (r *Repository) ListWorktrees() ([]*Worktree, error) {
-	cmd := exec.Command("git", "worktree", "list", "--porcelain")
-	cmd.Dir = r.RootPath
-	output, err := cmd.Output()
+	output, err := r.executor.ExecuteInDir(r.RootPath, "worktree", "list", "--porcelain")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list worktrees: %w", err)
 	}
 
-	return parseWorktreeList(string(output))
+	return parseWorktreeList(output, r.executor)
 }
 
 // parseWorktreeList parses the output of 'git worktree list --porcelain'
-func parseWorktreeList(output string) ([]*Worktree, error) {
+func parseWorktreeList(output string, executor GitExecutor) ([]*Worktree, error) {
 	var worktrees []*Worktree
 	var current *Worktree
 
@@ -96,7 +97,7 @@ func parseWorktreeList(output string) ([]*Worktree, error) {
 
 		switch field {
 		case "worktree":
-			current = &Worktree{Path: value}
+			current = &Worktree{Path: value, executor: executor}
 		case "HEAD":
 			if current != nil {
 				current.HEAD = value
@@ -119,7 +120,7 @@ func parseWorktreeList(output string) ([]*Worktree, error) {
 
 	// Enrich worktrees with additional information
 	for _, wt := range worktrees {
-		if err := enrichWorktree(wt); err != nil {
+		if err := enrichWorktree(wt, executor); err != nil {
 			// Log error but don't fail - continue with partial data
 			continue
 		}
@@ -129,9 +130,9 @@ func parseWorktreeList(output string) ([]*Worktree, error) {
 }
 
 // enrichWorktree adds additional information to the worktree
-func enrichWorktree(wt *Worktree) error {
+func enrichWorktree(wt *Worktree, executor GitExecutor) error {
 	// Get last commit timestamp
-	timestamp, err := getLastCommitTimestamp(wt.Path)
+	timestamp, err := getLastCommitTimestamp(wt.Path, executor)
 	if err == nil {
 		wt.LastCommitTime = timestamp
 	} else {
@@ -141,7 +142,7 @@ func enrichWorktree(wt *Worktree) error {
 
 	// Get unpushed commit count
 	if !wt.IsDetached && wt.Branch != "" {
-		count, err := getUnpushedCommitCount(wt.Path, wt.Branch)
+		count, err := getUnpushedCommitCount(wt.Path, wt.Branch, executor)
 		if err == nil {
 			wt.UnpushedCount = count
 		}
@@ -151,15 +152,13 @@ func enrichWorktree(wt *Worktree) error {
 }
 
 // getLastCommitTimestamp returns the timestamp of the last commit in the worktree
-func getLastCommitTimestamp(path string) (time.Time, error) {
-	cmd := exec.Command("git", "log", "-1", "--format=%ct")
-	cmd.Dir = path
-	output, err := cmd.Output()
+func getLastCommitTimestamp(path string, executor GitExecutor) (time.Time, error) {
+	output, err := executor.ExecuteInDir(path, "log", "-1", "--format=%ct")
 	if err != nil {
 		return time.Time{}, err
 	}
 
-	timestamp, err := strconv.ParseInt(strings.TrimSpace(string(output)), 10, 64)
+	timestamp, err := strconv.ParseInt(strings.TrimSpace(output), 10, 64)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -168,6 +167,8 @@ func getLastCommitTimestamp(path string) (time.Time, error) {
 }
 
 // getLastModificationTime returns the most recent file modification time
+// TODO: Refactor to accept FileSystem parameter once the FileSystem interface is created
+// Will need to replace: filepath.Walk, filepath.Rel, filepath.SkipDir, os.PathSeparator, os.FileInfo
 func getLastModificationTime(path string) time.Time {
 	var latestTime time.Time
 
@@ -203,32 +204,26 @@ func getLastModificationTime(path string) time.Time {
 }
 
 // getUnpushedCommitCount returns the number of unpushed commits
-func getUnpushedCommitCount(path, branch string) (int, error) {
+func getUnpushedCommitCount(path, branch string, executor GitExecutor) (int, error) {
 	// First, try to get the upstream branch
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
-	cmd.Dir = path
-	_, err := cmd.Output()
+	_, err := executor.ExecuteInDir(path, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
 
-	var output []byte
+	var output string
 	if err != nil {
 		// No upstream branch configured, count all commits
-		cmd = exec.Command("git", "rev-list", "--count", "HEAD")
-		cmd.Dir = path
-		output, err = cmd.Output()
+		output, err = executor.ExecuteInDir(path, "rev-list", "--count", "HEAD")
 		if err != nil {
 			return 0, err
 		}
 	} else {
 		// Count commits ahead of upstream
-		cmd = exec.Command("git", "rev-list", "--count", "@{u}..HEAD")
-		cmd.Dir = path
-		output, err = cmd.Output()
+		output, err = executor.ExecuteInDir(path, "rev-list", "--count", "@{u}..HEAD")
 		if err != nil {
 			return 0, err
 		}
 	}
 
-	count, err := strconv.Atoi(strings.TrimSpace(string(output)))
+	count, err := strconv.Atoi(strings.TrimSpace(output))
 	if err != nil {
 		return 0, err
 	}
@@ -284,40 +279,36 @@ func (w *Worktree) CleanupReason() string {
 
 // CreateWorktree creates a new worktree with an existing branch
 func (r *Repository) CreateWorktree(path, branchName string) error {
-	cmd := exec.Command("git", "worktree", "add", path, branchName)
-	cmd.Dir = r.RootPath
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to create worktree: %w\nOutput: %s", err, string(output))
+	_, err := r.executor.ExecuteInDir(r.RootPath, "worktree", "add", path, branchName)
+	if err != nil {
+		return fmt.Errorf("failed to create worktree: %w", err)
 	}
 	return nil
 }
 
 // CreateWorktreeWithNewBranch creates a new worktree with a new branch
 func (r *Repository) CreateWorktreeWithNewBranch(path, branchName, baseBranch string) error {
-	cmd := exec.Command("git", "worktree", "add", "-b", branchName, path, baseBranch)
-	cmd.Dir = r.RootPath
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to create worktree with new branch: %w\nOutput: %s", err, string(output))
+	_, err := r.executor.ExecuteInDir(r.RootPath, "worktree", "add", "-b", branchName, path, baseBranch)
+	if err != nil {
+		return fmt.Errorf("failed to create worktree with new branch: %w", err)
 	}
 	return nil
 }
 
 // RemoveWorktree removes a worktree (force removal)
 func (r *Repository) RemoveWorktree(path string) error {
-	cmd := exec.Command("git", "worktree", "remove", "--force", path)
-	cmd.Dir = r.RootPath
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to remove worktree: %w\nOutput: %s", err, string(output))
+	_, err := r.executor.ExecuteInDir(r.RootPath, "worktree", "remove", "--force", path)
+	if err != nil {
+		return fmt.Errorf("failed to remove worktree: %w", err)
 	}
 	return nil
 }
 
 // PruneWorktrees removes worktree information for deleted directories
 func (r *Repository) PruneWorktrees() error {
-	cmd := exec.Command("git", "worktree", "prune")
-	cmd.Dir = r.RootPath
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to prune worktrees: %w\nOutput: %s", err, string(output))
+	_, err := r.executor.ExecuteInDir(r.RootPath, "worktree", "prune")
+	if err != nil {
+		return fmt.Errorf("failed to prune worktrees: %w", err)
 	}
 	return nil
 }

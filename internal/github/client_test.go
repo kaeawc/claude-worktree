@@ -5,130 +5,239 @@ import (
 )
 
 func TestIsInstalled(t *testing.T) {
-	// This test checks if gh CLI is installed on the system
-	// The result will vary based on the environment
-	installed := IsInstalled()
-
-	// We can't assert a specific value, but we can verify the function runs
-	t.Logf("gh CLI installed: %v", installed)
-
-	// If gh is installed, test IsAuthenticated
-	if installed {
-		err := IsAuthenticated()
-		if err == nil {
-			t.Log("gh CLI is authenticated")
-		} else if err == ErrGHNotAuthenticated {
-			t.Log("gh CLI is not authenticated")
-		} else {
-			t.Errorf("IsAuthenticated() unexpected error: %v", err)
-		}
-	}
-}
-
-func TestNewClientWithRepo(t *testing.T) {
 	tests := []struct {
-		name    string
-		owner   string
-		repo    string
-		wantErr bool
+		name          string
+		setupFake     func() *FakeGitHubExecutor
+		wantInstalled bool
 	}{
 		{
-			name:    "Valid owner and repo",
-			owner:   "testowner",
-			repo:    "testrepo",
-			wantErr: !IsInstalled(), // Will error if gh not installed
+			name: "gh is installed",
+			setupFake: func() *FakeGitHubExecutor {
+				fake := NewFakeGitHubExecutor()
+				fake.SetResponse("--version", "gh version 2.0.0")
+				return fake
+			},
+			wantInstalled: true,
+		},
+		{
+			name: "gh is not installed",
+			setupFake: func() *FakeGitHubExecutor {
+				fake := NewFakeGitHubExecutor()
+				fake.SetError("--version", ErrGHNotInstalled)
+				return fake
+			},
+			wantInstalled: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client, err := NewClientWithRepo(tt.owner, tt.repo)
+			fake := tt.setupFake()
+			installed := IsInstalled(fake)
 
-			if tt.wantErr {
-				if err == nil {
-					t.Error("NewClientWithRepo() expected error, got nil")
+			if installed != tt.wantInstalled {
+				t.Errorf("IsInstalled() = %v, want %v", installed, tt.wantInstalled)
+			}
+
+			// Verify the command was executed
+			if len(fake.Commands) != 1 {
+				t.Errorf("Expected 1 command, got %d", len(fake.Commands))
+			}
+			if len(fake.Commands) > 0 {
+				cmd := fake.Commands[0]
+				if len(cmd) != 1 || cmd[0] != "--version" {
+					t.Errorf("Expected command [--version], got %v", cmd)
 				}
-				return
-			}
-
-			// Only proceed if gh is installed and authenticated
-			if !IsInstalled() {
-				t.Skip("gh CLI not installed, skipping test")
-				return
-			}
-
-			if IsAuthenticated() != nil {
-				t.Skip("gh CLI not authenticated, skipping test")
-				return
-			}
-
-			if err != nil {
-				t.Errorf("NewClientWithRepo() unexpected error: %v", err)
-				return
-			}
-
-			if client.Owner != tt.owner {
-				t.Errorf("NewClientWithRepo() Owner = %v, want %v", client.Owner, tt.owner)
-			}
-
-			if client.Repo != tt.repo {
-				t.Errorf("NewClientWithRepo() Repo = %v, want %v", client.Repo, tt.repo)
 			}
 		})
 	}
 }
 
-func TestNewClient(t *testing.T) {
-	// This test requires a git repository with a GitHub remote
-	// We'll skip it if gh is not installed or authenticated
-	if !IsInstalled() {
-		t.Skip("gh CLI not installed")
+func TestIsAuthenticated(t *testing.T) {
+	tests := []struct {
+		name      string
+		setupFake func() *FakeGitHubExecutor
+		wantErr   error
+	}{
+		{
+			name: "gh is authenticated",
+			setupFake: func() *FakeGitHubExecutor {
+				fake := NewFakeGitHubExecutor()
+				fake.SetResponse("auth status", "Logged in to github.com")
+				return fake
+			},
+			wantErr: nil,
+		},
+		{
+			name: "gh is not authenticated",
+			setupFake: func() *FakeGitHubExecutor {
+				fake := NewFakeGitHubExecutor()
+				fake.SetError("auth status", ErrGHNotAuthenticated)
+				return fake
+			},
+			wantErr: ErrGHNotAuthenticated,
+		},
 	}
 
-	if IsAuthenticated() != nil {
-		t.Skip("gh CLI not authenticated")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := tt.setupFake()
+			err := IsAuthenticated(fake)
+
+			if err != tt.wantErr {
+				t.Errorf("IsAuthenticated() error = %v, want %v", err, tt.wantErr)
+			}
+
+			// Verify the command was executed
+			if len(fake.Commands) != 1 {
+				t.Errorf("Expected 1 command, got %d", len(fake.Commands))
+			}
+			if len(fake.Commands) > 0 {
+				cmd := fake.Commands[0]
+				if len(cmd) != 2 || cmd[0] != "auth" || cmd[1] != "status" {
+					t.Errorf("Expected command [auth status], got %v", cmd)
+				}
+			}
+		})
+	}
+}
+
+func TestNewClientWithRepoAndExecutor(t *testing.T) {
+	tests := []struct {
+		name      string
+		owner     string
+		repo      string
+		setupFake func() *FakeGitHubExecutor
+		wantErr   bool
+	}{
+		{
+			name:  "Valid owner and repo",
+			owner: "testowner",
+			repo:  "testrepo",
+			setupFake: func() *FakeGitHubExecutor {
+				fake := NewFakeGitHubExecutor()
+				fake.SetResponse("--version", "gh version 2.0.0")
+				fake.SetResponse("auth status", "Logged in to github.com")
+				return fake
+			},
+			wantErr: false,
+		},
+		{
+			name:  "gh not installed",
+			owner: "testowner",
+			repo:  "testrepo",
+			setupFake: func() *FakeGitHubExecutor {
+				fake := NewFakeGitHubExecutor()
+				fake.SetError("--version", ErrGHNotInstalled)
+				return fake
+			},
+			wantErr: true,
+		},
+		{
+			name:  "gh not authenticated",
+			owner: "testowner",
+			repo:  "testrepo",
+			setupFake: func() *FakeGitHubExecutor {
+				fake := NewFakeGitHubExecutor()
+				fake.SetResponse("--version", "gh version 2.0.0")
+				fake.SetError("auth status", ErrGHNotAuthenticated)
+				return fake
+			},
+			wantErr: true,
+		},
 	}
 
-	// Try to create client from current directory
-	// This will only work if we're in a git repo with a GitHub remote
-	_, err := NewClient(".")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := tt.setupFake()
+			client, err := NewClientWithRepoAndExecutor(tt.owner, tt.repo, fake)
 
-	// We expect either success or ErrNotGitHubRepo/ErrNoRemote
-	// but not ErrGHNotInstalled since we already checked
-	if err != nil {
-		if err == ErrGHNotInstalled {
-			t.Errorf("NewClient() returned ErrGHNotInstalled, but gh is installed")
-		} else if err == ErrGHNotAuthenticated {
-			t.Errorf("NewClient() returned ErrGHNotAuthenticated, but gh is authenticated")
-		} else {
-			// Expected errors (not a git repo, not a GitHub repo, etc.)
-			t.Logf("NewClient() error (expected in some environments): %v", err)
-		}
+			if tt.wantErr {
+				if err == nil {
+					t.Error("NewClientWithRepoAndExecutor() expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("NewClientWithRepoAndExecutor() unexpected error: %v", err)
+				return
+			}
+
+			if client.Owner != tt.owner {
+				t.Errorf("NewClientWithRepoAndExecutor() Owner = %v, want %v", client.Owner, tt.owner)
+			}
+
+			if client.Repo != tt.repo {
+				t.Errorf("NewClientWithRepoAndExecutor() Repo = %v, want %v", client.Repo, tt.repo)
+			}
+
+			// Verify commands were executed
+			if len(fake.Commands) < 2 {
+				t.Errorf("Expected at least 2 commands (version and auth), got %d", len(fake.Commands))
+			}
+		})
 	}
 }
 
 func TestClientExecGH(t *testing.T) {
-	if !IsInstalled() {
-		t.Skip("gh CLI not installed")
+	tests := []struct {
+		name      string
+		setupFake func() *FakeGitHubExecutor
+		args      []string
+		wantErr   bool
+	}{
+		{
+			name: "Successful command execution",
+			setupFake: func() *FakeGitHubExecutor {
+				fake := NewFakeGitHubExecutor()
+				fake.SetResponse("--version", "gh version 2.0.0")
+				fake.SetResponse("auth status", "Logged in to github.com")
+				fake.SetResponse("-R testowner/testrepo issue list --limit 1 --json number", `[{"number":123}]`)
+				return fake
+			},
+			args:    []string{"issue", "list", "--limit", "1", "--json", "number"},
+			wantErr: false,
+		},
+		{
+			name: "Command execution fails",
+			setupFake: func() *FakeGitHubExecutor {
+				fake := NewFakeGitHubExecutor()
+				fake.SetResponse("--version", "gh version 2.0.0")
+				fake.SetResponse("auth status", "Logged in to github.com")
+				fake.SetError("-R testowner/testrepo issue view 999 --json number", ErrGHNotInstalled)
+				return fake
+			},
+			args:    []string{"issue", "view", "999", "--json", "number"},
+			wantErr: true,
+		},
 	}
 
-	if IsAuthenticated() != nil {
-		t.Skip("gh CLI not authenticated")
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := tt.setupFake()
+			client, err := NewClientWithRepoAndExecutor("testowner", "testrepo", fake)
+			if err != nil {
+				t.Fatalf("NewClientWithRepoAndExecutor() error = %v", err)
+			}
 
-	client := &Client{
-		Owner: "cli",
-		Repo:  "cli",
-	}
+			_, err = client.execGHInRepo(tt.args...)
 
-	// Test a simple gh command (checking version should always work)
-	// Note: We can't use execGH directly as it's not exported and expects repo context
-	// Instead, we'll test execGHInRepo with a read-only command
-	_, err := client.execGHInRepo("issue", "list", "--limit", "1", "--json", "number")
+			if tt.wantErr {
+				if err == nil {
+					t.Error("execGHInRepo() expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("execGHInRepo() unexpected error: %v", err)
+				}
+			}
 
-	if err != nil {
-		// This might fail if we don't have access to cli/cli repo
-		// or if the command syntax is wrong
-		t.Logf("execGHInRepo() error (may be expected): %v", err)
+			// Verify that commands were recorded
+			// Should have: --version, auth status, and the actual command
+			if len(fake.Commands) < 3 {
+				t.Errorf("Expected at least 3 commands, got %d", len(fake.Commands))
+			}
+		})
 	}
 }

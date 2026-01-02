@@ -2,9 +2,6 @@ package git
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 )
 
@@ -18,6 +15,10 @@ type Repository struct {
 	SourceFolder string
 	// Config provides access to git configuration for this repository
 	Config *Config
+	// executor handles git command execution
+	executor GitExecutor
+	// filesystem handles filesystem operations
+	filesystem FileSystem
 }
 
 // NewRepository creates a Repository instance from the current working directory
@@ -27,64 +28,83 @@ func NewRepository() (*Repository, error) {
 
 // NewRepositoryFromPath creates a Repository instance from the specified path
 func NewRepositoryFromPath(path string) (*Repository, error) {
+	executor := NewGitExecutor()
+	filesystem := NewFileSystem()
+	return NewRepositoryFromPathWithDeps(path, executor, filesystem)
+}
+
+// NewRepositoryWithDeps creates a Repository instance with provided dependencies
+// This is useful for testing where you can inject mock/fake implementations
+func NewRepositoryWithDeps(executor GitExecutor, filesystem FileSystem) (*Repository, error) {
+	return NewRepositoryFromPathWithDeps(".", executor, filesystem)
+}
+
+// NewRepositoryFromPathWithDeps creates a Repository instance from the specified path with dependencies
+func NewRepositoryFromPathWithDeps(path string, executor GitExecutor, filesystem FileSystem) (*Repository, error) {
 	// Check if we're in a git repository
-	if !IsGitRepository(path) {
+	if !isGitRepository(path, executor) {
 		return nil, fmt.Errorf("not a git repository (or any of the parent directories): %s", path)
 	}
 
 	// Get the repository root
-	rootPath, err := GetRepositoryRoot(path)
+	rootPath, err := getRepositoryRoot(path, executor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get repository root: %w", err)
 	}
 
 	// Get the source folder name
-	sourceFolder := filepath.Base(rootPath)
+	sourceFolder := filesystem.Base(rootPath)
 
 	// Construct worktree base path: ~/worktrees/<repo-name>
-	homeDir, err := os.UserHomeDir()
+	homeDir, err := filesystem.UserHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user home directory: %w", err)
 	}
-	worktreeBase := filepath.Join(homeDir, "worktrees", sourceFolder)
+	worktreeBase := filesystem.Join(homeDir, "worktrees", sourceFolder)
 
 	return &Repository{
 		RootPath:     rootPath,
 		WorktreeBase: worktreeBase,
 		SourceFolder: sourceFolder,
 		Config:       NewConfig(rootPath),
+		executor:     executor,
+		filesystem:   filesystem,
 	}, nil
 }
 
 // IsGitRepository checks if the given path is within a git repository
 func IsGitRepository(path string) bool {
-	cmd := exec.Command("git", "rev-parse", "--git-dir")
-	cmd.Dir = path
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	return cmd.Run() == nil
+	executor := NewGitExecutor()
+	return isGitRepository(path, executor)
+}
+
+// isGitRepository checks if the given path is within a git repository using provided executor
+func isGitRepository(path string, executor GitExecutor) bool {
+	_, err := executor.ExecuteInDir(path, "rev-parse", "--git-dir")
+	return err == nil
 }
 
 // GetRepositoryRoot returns the absolute path to the git repository root
 func GetRepositoryRoot(path string) (string, error) {
-	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
-	cmd.Dir = path
-	output, err := cmd.Output()
+	executor := NewGitExecutor()
+	return getRepositoryRoot(path, executor)
+}
+
+// getRepositoryRoot returns the absolute path to the git repository root using provided executor
+func getRepositoryRoot(path string, executor GitExecutor) (string, error) {
+	output, err := executor.ExecuteInDir(path, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return "", fmt.Errorf("failed to get repository root: %w", err)
 	}
-	return strings.TrimSpace(string(output)), nil
+	return output, nil
 }
 
 // GetDefaultBranch returns the default branch name (main, master, etc.)
 func (r *Repository) GetDefaultBranch() (string, error) {
 	// Try to get from remote HEAD
-	cmd := exec.Command("git", "symbolic-ref", "refs/remotes/origin/HEAD")
-	cmd.Dir = r.RootPath
-	if output, err := cmd.Output(); err == nil {
+	if output, err := r.executor.ExecuteInDir(r.RootPath, "symbolic-ref", "refs/remotes/origin/HEAD"); err == nil {
 		// Output format: refs/remotes/origin/main
-		ref := strings.TrimSpace(string(output))
-		parts := strings.Split(ref, "/")
+		parts := strings.Split(output, "/")
 		if len(parts) > 0 {
 			return parts[len(parts)-1], nil
 		}
@@ -108,50 +128,41 @@ func (r *Repository) GetDefaultBranch() (string, error) {
 
 // BranchExists checks if a local branch exists
 func (r *Repository) BranchExists(branchName string) bool {
-	cmd := exec.Command("git", "show-ref", "--verify", "--quiet", "refs/heads/"+branchName)
-	cmd.Dir = r.RootPath
-	return cmd.Run() == nil
+	_, err := r.executor.ExecuteInDir(r.RootPath, "show-ref", "--verify", "--quiet", "refs/heads/"+branchName)
+	return err == nil
 }
 
 // remoteBranchExists checks if a remote branch exists
 func (r *Repository) remoteBranchExists(refName string) bool {
-	cmd := exec.Command("git", "show-ref", "--verify", "--quiet", "refs/remotes/"+refName)
-	cmd.Dir = r.RootPath
-	return cmd.Run() == nil
+	_, err := r.executor.ExecuteInDir(r.RootPath, "show-ref", "--verify", "--quiet", "refs/remotes/"+refName)
+	return err == nil
 }
 
 // GetCurrentBranch returns the current branch name, or empty string if in detached HEAD
 func (r *Repository) GetCurrentBranch() (string, error) {
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
-	cmd.Dir = r.RootPath
-	output, err := cmd.Output()
+	output, err := r.executor.ExecuteInDir(r.RootPath, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("failed to get current branch: %w", err)
 	}
-	branch := strings.TrimSpace(string(output))
 	// If in detached HEAD state, git returns "HEAD"
-	if branch == "HEAD" {
+	if output == "HEAD" {
 		return "", nil
 	}
-	return branch, nil
+	return output, nil
 }
 
 // CreateBranch creates a new branch from the specified base branch
 func (r *Repository) CreateBranch(branchName, baseBranch string) error {
-	cmd := exec.Command("git", "branch", branchName, baseBranch)
-	cmd.Dir = r.RootPath
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to create branch %s: %w\nOutput: %s", branchName, err, string(output))
+	if _, err := r.executor.ExecuteInDir(r.RootPath, "branch", branchName, baseBranch); err != nil {
+		return fmt.Errorf("failed to create branch %s: %w", branchName, err)
 	}
 	return nil
 }
 
 // DeleteBranch deletes a branch (force delete)
 func (r *Repository) DeleteBranch(branchName string) error {
-	cmd := exec.Command("git", "branch", "-D", branchName)
-	cmd.Dir = r.RootPath
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to delete branch %s: %w\nOutput: %s", branchName, err, string(output))
+	if _, err := r.executor.ExecuteInDir(r.RootPath, "branch", "-D", branchName); err != nil {
+		return fmt.Errorf("failed to delete branch %s: %w", branchName, err)
 	}
 	return nil
 }

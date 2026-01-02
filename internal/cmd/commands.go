@@ -281,7 +281,8 @@ func RunIssue(issueID string) error {
 	}
 
 	// 2. Check gh CLI availability
-	if !github.IsInstalled() {
+	executor := github.NewGitHubExecutor()
+	if !github.IsInstalled(executor) {
 		return fmt.Errorf("gh CLI is not installed. Install with: brew install gh")
 	}
 

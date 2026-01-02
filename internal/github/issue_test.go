@@ -113,9 +113,9 @@ func TestIssueBranchName(t *testing.T) {
 
 func TestIssueFormatForDisplay(t *testing.T) {
 	tests := []struct {
-		name   string
-		issue  Issue
-		want   string
+		name  string
+		issue Issue
+		want  string
 	}{
 		{
 			name: "Issue without labels",
@@ -162,111 +162,312 @@ func TestIssueFormatForDisplay(t *testing.T) {
 	}
 }
 
-// Integration tests for GitHub API operations
-// These tests require gh CLI to be installed and authenticated
-
 func TestListOpenIssues(t *testing.T) {
-	if !IsInstalled() {
-		t.Skip("gh CLI not installed")
+	tests := []struct {
+		name      string
+		limit     int
+		setupFake func() *FakeGitHubExecutor
+		wantCount int
+		wantErr   bool
+	}{
+		{
+			name:  "List 10 issues successfully",
+			limit: 10,
+			setupFake: func() *FakeGitHubExecutor {
+				fake := NewFakeGitHubExecutor()
+				fake.SetResponse("--version", "gh version 2.0.0")
+				fake.SetResponse("auth status", "Logged in to github.com")
+				fake.SetResponse("-R testowner/testrepo issue list --limit 10 --state open --json number,title,labels,url", `[
+					{"number":123,"title":"Fix bug","labels":[],"url":"https://github.com/testowner/testrepo/issues/123"},
+					{"number":124,"title":"Add feature","labels":[{"name":"enhancement","color":"00ff00"}],"url":"https://github.com/testowner/testrepo/issues/124"}
+				]`)
+				return fake
+			},
+			wantCount: 2,
+			wantErr:   false,
+		},
+		{
+			name:  "Empty issue list",
+			limit: 5,
+			setupFake: func() *FakeGitHubExecutor {
+				fake := NewFakeGitHubExecutor()
+				fake.SetResponse("--version", "gh version 2.0.0")
+				fake.SetResponse("auth status", "Logged in to github.com")
+				fake.SetResponse("-R testowner/testrepo issue list --limit 5 --state open --json number,title,labels,url", `[]`)
+				return fake
+			},
+			wantCount: 0,
+			wantErr:   false,
+		},
 	}
 
-	if IsAuthenticated() != nil {
-		t.Skip("gh CLI not authenticated")
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := tt.setupFake()
+			client, err := NewClientWithRepoAndExecutor("testowner", "testrepo", fake)
+			if err != nil {
+				t.Fatalf("NewClientWithRepoAndExecutor() error = %v", err)
+			}
 
-	// Use the GitHub CLI repository as a test case (it should always have issues)
-	client, err := NewClientWithRepo("cli", "cli")
-	if err != nil {
-		t.Fatalf("NewClientWithRepo() error = %v", err)
-	}
+			issues, err := client.ListOpenIssues(tt.limit)
 
-	issues, err := client.ListOpenIssues(10)
-	if err != nil {
-		t.Fatalf("ListOpenIssues() error = %v", err)
-	}
+			if tt.wantErr {
+				if err == nil {
+					t.Error("ListOpenIssues() expected error, got nil")
+				}
+				return
+			}
 
-	// Just verify we got some structure back
-	// We can't assert specific issues since they change over time
-	t.Logf("Retrieved %d issues", len(issues))
+			if err != nil {
+				t.Errorf("ListOpenIssues() unexpected error: %v", err)
+				return
+			}
 
-	for _, issue := range issues {
-		// Verify basic structure
-		if issue.Number == 0 {
-			t.Error("Issue number should not be 0")
-		}
-		if issue.Title == "" {
-			t.Error("Issue title should not be empty")
-		}
-		if issue.URL == "" {
-			t.Error("Issue URL should not be empty")
-		}
+			if len(issues) != tt.wantCount {
+				t.Errorf("ListOpenIssues() returned %d issues, want %d", len(issues), tt.wantCount)
+			}
+
+			// Verify basic structure of returned issues
+			for _, issue := range issues {
+				if issue.Number == 0 {
+					t.Error("Issue number should not be 0")
+				}
+				if issue.Title == "" {
+					t.Error("Issue title should not be empty")
+				}
+				if issue.URL == "" {
+					t.Error("Issue URL should not be empty")
+				}
+			}
+
+			// Verify the correct command was executed
+			expectedCmd := []string{"-R", "testowner/testrepo", "issue", "list", "--limit", "10", "--state", "open", "--json", "number,title,labels,url"}
+			if tt.limit == 5 {
+				expectedCmd = []string{"-R", "testowner/testrepo", "issue", "list", "--limit", "5", "--state", "open", "--json", "number,title,labels,url"}
+			}
+			lastCmd := fake.GetLastCommand()
+			if len(lastCmd) != len(expectedCmd) {
+				t.Errorf("Expected command %v, got %v", expectedCmd, lastCmd)
+			}
+		})
 	}
 }
 
 func TestGetIssue(t *testing.T) {
-	if !IsInstalled() {
-		t.Skip("gh CLI not installed")
+	tests := []struct {
+		name       string
+		issueNum   int
+		setupFake  func() *FakeGitHubExecutor
+		wantNumber int
+		wantTitle  string
+		wantState  string
+		wantErr    bool
+	}{
+		{
+			name:     "Get issue successfully",
+			issueNum: 123,
+			setupFake: func() *FakeGitHubExecutor {
+				fake := NewFakeGitHubExecutor()
+				fake.SetResponse("--version", "gh version 2.0.0")
+				fake.SetResponse("auth status", "Logged in to github.com")
+				fake.SetResponse("-R testowner/testrepo issue view 123 --json number,title,body,state,stateReason,labels,url", `{
+					"number":123,
+					"title":"Fix authentication bug",
+					"body":"This is the bug description",
+					"state":"OPEN",
+					"stateReason":"",
+					"labels":[{"name":"bug","color":"ff0000"}],
+					"url":"https://github.com/testowner/testrepo/issues/123"
+				}`)
+				return fake
+			},
+			wantNumber: 123,
+			wantTitle:  "Fix authentication bug",
+			wantState:  "OPEN",
+			wantErr:    false,
+		},
+		{
+			name:     "Get closed issue",
+			issueNum: 456,
+			setupFake: func() *FakeGitHubExecutor {
+				fake := NewFakeGitHubExecutor()
+				fake.SetResponse("--version", "gh version 2.0.0")
+				fake.SetResponse("auth status", "Logged in to github.com")
+				fake.SetResponse("-R testowner/testrepo issue view 456 --json number,title,body,state,stateReason,labels,url", `{
+					"number":456,
+					"title":"Add new feature",
+					"body":"Feature description",
+					"state":"CLOSED",
+					"stateReason":"COMPLETED",
+					"labels":[],
+					"url":"https://github.com/testowner/testrepo/issues/456"
+				}`)
+				return fake
+			},
+			wantNumber: 456,
+			wantTitle:  "Add new feature",
+			wantState:  "CLOSED",
+			wantErr:    false,
+		},
 	}
 
-	if IsAuthenticated() != nil {
-		t.Skip("gh CLI not authenticated")
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := tt.setupFake()
+			client, err := NewClientWithRepoAndExecutor("testowner", "testrepo", fake)
+			if err != nil {
+				t.Fatalf("NewClientWithRepoAndExecutor() error = %v", err)
+			}
 
-	// Use the GitHub CLI repository
-	client, err := NewClientWithRepo("cli", "cli")
-	if err != nil {
-		t.Fatalf("NewClientWithRepo() error = %v", err)
-	}
+			issue, err := client.GetIssue(tt.issueNum)
 
-	// Get issue #1 (first issue, should always exist)
-	issue, err := client.GetIssue(1)
-	if err != nil {
-		t.Fatalf("GetIssue() error = %v", err)
-	}
+			if tt.wantErr {
+				if err == nil {
+					t.Error("GetIssue() expected error, got nil")
+				}
+				return
+			}
 
-	// Verify structure
-	if issue.Number != 1 {
-		t.Errorf("GetIssue() Number = %d, want 1", issue.Number)
-	}
+			if err != nil {
+				t.Errorf("GetIssue() unexpected error: %v", err)
+				return
+			}
 
-	if issue.Title == "" {
-		t.Error("GetIssue() Title should not be empty")
-	}
+			if issue.Number != tt.wantNumber {
+				t.Errorf("GetIssue() Number = %d, want %d", issue.Number, tt.wantNumber)
+			}
 
-	if issue.URL == "" {
-		t.Error("GetIssue() URL should not be empty")
-	}
+			if issue.Title != tt.wantTitle {
+				t.Errorf("GetIssue() Title = %s, want %s", issue.Title, tt.wantTitle)
+			}
 
-	if issue.State == "" {
-		t.Error("GetIssue() State should not be empty")
-	}
+			if issue.State != tt.wantState {
+				t.Errorf("GetIssue() State = %s, want %s", issue.State, tt.wantState)
+			}
 
-	t.Logf("Issue #1: %s (State: %s)", issue.Title, issue.State)
+			if issue.URL == "" {
+				t.Error("GetIssue() URL should not be empty")
+			}
+
+			// Verify the correct command was executed
+			lastCmd := fake.GetLastCommand()
+			expectedCmdStart := []string{"-R", "testowner/testrepo", "issue", "view"}
+			for i, expected := range expectedCmdStart {
+				if i >= len(lastCmd) || lastCmd[i] != expected {
+					t.Errorf("Expected command to start with %v, got %v", expectedCmdStart, lastCmd)
+					break
+				}
+			}
+		})
+	}
 }
 
 func TestIsIssueMerged(t *testing.T) {
-	if !IsInstalled() {
-		t.Skip("gh CLI not installed")
+	tests := []struct {
+		name       string
+		issueNum   int
+		setupFake  func() *FakeGitHubExecutor
+		wantMerged bool
+		wantErr    bool
+	}{
+		{
+			name:     "Issue is merged",
+			issueNum: 123,
+			setupFake: func() *FakeGitHubExecutor {
+				fake := NewFakeGitHubExecutor()
+				fake.SetResponse("--version", "gh version 2.0.0")
+				fake.SetResponse("auth status", "Logged in to github.com")
+				fake.SetResponse("-R testowner/testrepo issue view 123 --json number,title,body,state,stateReason,labels,url", `{
+					"number":123,
+					"title":"Fix bug",
+					"body":"",
+					"state":"CLOSED",
+					"stateReason":"COMPLETED",
+					"labels":[],
+					"url":"https://github.com/testowner/testrepo/issues/123"
+				}`)
+				fake.SetResponse("-R testowner/testrepo pr list --state merged --search closes #123 OR fixes #123 OR resolves #123 --json number --jq length", "1")
+				return fake
+			},
+			wantMerged: true,
+			wantErr:    false,
+		},
+		{
+			name:     "Issue is closed but not merged",
+			issueNum: 456,
+			setupFake: func() *FakeGitHubExecutor {
+				fake := NewFakeGitHubExecutor()
+				fake.SetResponse("--version", "gh version 2.0.0")
+				fake.SetResponse("auth status", "Logged in to github.com")
+				fake.SetResponse("-R testowner/testrepo issue view 456 --json number,title,body,state,stateReason,labels,url", `{
+					"number":456,
+					"title":"Won't fix",
+					"body":"",
+					"state":"CLOSED",
+					"stateReason":"NOT_PLANNED",
+					"labels":[],
+					"url":"https://github.com/testowner/testrepo/issues/456"
+				}`)
+				fake.SetResponse("-R testowner/testrepo pr list --state merged --search closes #456 OR fixes #456 OR resolves #456 --json number --jq length", "0")
+				return fake
+			},
+			wantMerged: false,
+			wantErr:    false,
+		},
+		{
+			name:     "Issue is still open",
+			issueNum: 789,
+			setupFake: func() *FakeGitHubExecutor {
+				fake := NewFakeGitHubExecutor()
+				fake.SetResponse("--version", "gh version 2.0.0")
+				fake.SetResponse("auth status", "Logged in to github.com")
+				fake.SetResponse("-R testowner/testrepo issue view 789 --json number,title,body,state,stateReason,labels,url", `{
+					"number":789,
+					"title":"In progress",
+					"body":"",
+					"state":"OPEN",
+					"stateReason":"",
+					"labels":[],
+					"url":"https://github.com/testowner/testrepo/issues/789"
+				}`)
+				return fake
+			},
+			wantMerged: false,
+			wantErr:    false,
+		},
 	}
 
-	if IsAuthenticated() != nil {
-		t.Skip("gh CLI not authenticated")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := tt.setupFake()
+			client, err := NewClientWithRepoAndExecutor("testowner", "testrepo", fake)
+			if err != nil {
+				t.Fatalf("NewClientWithRepoAndExecutor() error = %v", err)
+			}
+
+			merged, err := client.IsIssueMerged(tt.issueNum)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Error("IsIssueMerged() expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("IsIssueMerged() unexpected error: %v", err)
+				return
+			}
+
+			if merged != tt.wantMerged {
+				t.Errorf("IsIssueMerged() = %v, want %v", merged, tt.wantMerged)
+			}
+
+			// Verify commands were executed
+			// Should have at minimum: --version, auth status, issue view
+			if len(fake.Commands) < 3 {
+				t.Errorf("Expected at least 3 commands, got %d", len(fake.Commands))
+			}
+		})
 	}
-
-	// Use the GitHub CLI repository
-	client, err := NewClientWithRepo("cli", "cli")
-	if err != nil {
-		t.Fatalf("NewClientWithRepo() error = %v", err)
-	}
-
-	// Test with issue #1 (should be closed and likely merged)
-	merged, err := client.IsIssueMerged(1)
-	if err != nil {
-		t.Fatalf("IsIssueMerged() error = %v", err)
-	}
-
-	t.Logf("Issue #1 merged status: %v", merged)
-
-	// We can't assert the exact value since it depends on the repository state
-	// But we can verify the function runs without error
 }

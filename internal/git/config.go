@@ -2,7 +2,6 @@ package git
 
 import (
 	"fmt"
-	"os/exec"
 	"strconv"
 	"strings"
 )
@@ -62,25 +61,36 @@ const (
 type Config struct {
 	// RootPath is the repository root directory
 	RootPath string
+	// executor is the GitExecutor used to run git commands
+	executor GitExecutor
 }
 
-// NewConfig creates a new Config instance
+// NewConfig creates a new Config instance with a real git executor
 func NewConfig(rootPath string) *Config {
 	return &Config{
 		RootPath: rootPath,
+		executor: NewGitExecutor(),
+	}
+}
+
+// NewConfigWithExecutor creates a new Config instance with a custom executor (for testing)
+func NewConfigWithExecutor(rootPath string, executor GitExecutor) *Config {
+	return &Config{
+		RootPath: rootPath,
+		executor: executor,
 	}
 }
 
 // Get retrieves a configuration value
 // If scope is ConfigScopeAuto, it checks local first, then global
 func (c *Config) Get(key string, scope ConfigScope) (string, error) {
-	var cmd *exec.Cmd
+	var args []string
 
 	switch scope {
 	case ConfigScopeLocal:
-		cmd = exec.Command("git", "config", "--local", "--get", key)
+		args = []string{"config", "--local", "--get", key}
 	case ConfigScopeGlobal:
-		cmd = exec.Command("git", "config", "--global", "--get", key)
+		args = []string{"config", "--global", "--get", key}
 	case ConfigScopeAuto:
 		// Try local first
 		value, err := c.Get(key, ConfigScopeLocal)
@@ -93,17 +103,16 @@ func (c *Config) Get(key string, scope ConfigScope) (string, error) {
 		return "", fmt.Errorf("invalid config scope: %s", scope)
 	}
 
-	cmd.Dir = c.RootPath
-	output, err := cmd.Output()
+	output, err := c.executor.ExecuteInDir(c.RootPath, args...)
 	if err != nil {
-		// git config returns exit code 1 if key not found
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		// git config returns exit code 1 if key not found - check error message
+		if strings.Contains(err.Error(), "failed") {
 			return "", nil
 		}
 		return "", fmt.Errorf("failed to get config %s: %w", key, err)
 	}
 
-	return strings.TrimSpace(string(output)), nil
+	return output, nil
 }
 
 // GetWithDefault retrieves a configuration value, returning defaultValue if not set
@@ -122,19 +131,18 @@ func (c *Config) Set(key, value string, scope ConfigScope) error {
 		scope = ConfigScopeLocal
 	}
 
-	var cmd *exec.Cmd
+	var args []string
 	switch scope {
 	case ConfigScopeLocal:
-		cmd = exec.Command("git", "config", "--local", key, value)
+		args = []string{"config", "--local", key, value}
 	case ConfigScopeGlobal:
-		cmd = exec.Command("git", "config", "--global", key, value)
+		args = []string{"config", "--global", key, value}
 	default:
 		return fmt.Errorf("invalid config scope: %s", scope)
 	}
 
-	cmd.Dir = c.RootPath
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to set config %s=%s: %w\nOutput: %s", key, value, err, string(output))
+	if _, err := c.executor.ExecuteInDir(c.RootPath, args...); err != nil {
+		return fmt.Errorf("failed to set config %s=%s: %w", key, value, err)
 	}
 
 	return nil
@@ -149,30 +157,29 @@ func (c *Config) Unset(key string, scope ConfigScope) error {
 		return nil
 	}
 
-	var cmd *exec.Cmd
+	var args []string
 	switch scope {
 	case ConfigScopeLocal:
-		cmd = exec.Command("git", "config", "--local", "--unset", key)
+		args = []string{"config", "--local", "--unset", key}
 	case ConfigScopeGlobal:
-		cmd = exec.Command("git", "config", "--global", "--unset", key)
+		args = []string{"config", "--global", "--unset", key}
 	default:
 		return fmt.Errorf("invalid config scope: %s", scope)
 	}
 
-	cmd.Dir = c.RootPath
-	_ = cmd.Run() // Ignore errors - key might not exist
+	_, _ = c.executor.ExecuteInDir(c.RootPath, args...) // Ignore errors - key might not exist
 	return nil
 }
 
 // GetBool retrieves a boolean configuration value
 func (c *Config) GetBool(key string, scope ConfigScope) (bool, error) {
-	var cmd *exec.Cmd
+	var args []string
 
 	switch scope {
 	case ConfigScopeLocal:
-		cmd = exec.Command("git", "config", "--local", "--get", "--bool", key)
+		args = []string{"config", "--local", "--get", "--bool", key}
 	case ConfigScopeGlobal:
-		cmd = exec.Command("git", "config", "--global", "--get", "--bool", key)
+		args = []string{"config", "--global", "--get", "--bool", key}
 	case ConfigScopeAuto:
 		// Try local first
 		value, err := c.GetBool(key, ConfigScopeLocal)
@@ -185,18 +192,16 @@ func (c *Config) GetBool(key string, scope ConfigScope) (bool, error) {
 		return false, fmt.Errorf("invalid config scope: %s", scope)
 	}
 
-	cmd.Dir = c.RootPath
-	output, err := cmd.Output()
+	output, err := c.executor.ExecuteInDir(c.RootPath, args...)
 	if err != nil {
 		// git config returns exit code 1 if key not found
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		if strings.Contains(err.Error(), "failed") {
 			return false, fmt.Errorf("config key not found: %s", key)
 		}
 		return false, fmt.Errorf("failed to get config %s: %w", key, err)
 	}
 
-	value := strings.TrimSpace(string(output))
-	return value == "true", nil
+	return output == "true", nil
 }
 
 // GetBoolWithDefault retrieves a boolean configuration value, returning defaultValue if not set

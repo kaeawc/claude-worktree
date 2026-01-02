@@ -11,13 +11,13 @@ import (
 
 // Issue represents a GitHub issue
 type Issue struct {
-	Number      int       `json:"number"`
-	Title       string    `json:"title"`
-	Body        string    `json:"body"`
-	State       string    `json:"state"`       // "OPEN" or "CLOSED"
-	StateReason string    `json:"stateReason"` // "COMPLETED", "NOT_PLANNED", etc.
-	Labels      []Label   `json:"labels"`
-	URL         string    `json:"url"`
+	Number      int     `json:"number"`
+	Title       string  `json:"title"`
+	Body        string  `json:"body"`
+	State       string  `json:"state"`       // "OPEN" or "CLOSED"
+	StateReason string  `json:"stateReason"` // "COMPLETED", "NOT_PLANNED", etc.
+	Labels      []Label `json:"labels"`
+	URL         string  `json:"url"`
 }
 
 // Label represents a GitHub label
