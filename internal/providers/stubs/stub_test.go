@@ -355,10 +355,10 @@ func TestStubProvider_Reset(t *testing.T) {
 
 func TestPreBuiltStubs(t *testing.T) {
 	tests := []struct {
-		name          string
-		stubFactory   func() *StubProvider
-		expectedName  string
-		expectedType  string
+		name           string
+		stubFactory    func() *StubProvider
+		expectedName   string
+		expectedType   string
 		expectedIssues int
 	}{
 		{

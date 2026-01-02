@@ -207,6 +207,7 @@ func (s *StubProvider) AddIssue(issue *providers.Issue) {
 	if s.Issues == nil {
 		s.Issues = make(map[string]*providers.Issue)
 	}
+
 	s.Issues[issue.ID] = issue
 }
 
@@ -215,6 +216,7 @@ func (s *StubProvider) AddPullRequest(pr *providers.PullRequest) {
 	if s.PullRequests == nil {
 		s.PullRequests = make(map[string]*providers.PullRequest)
 	}
+
 	s.PullRequests[pr.ID] = pr
 }
 
@@ -223,11 +225,12 @@ func (s *StubProvider) SetError(method string, err error) {
 	if s.Errors == nil {
 		s.Errors = make(map[string]error)
 	}
+
 	s.Errors[method] = err
 }
 
 // ListIssues returns all issues (or error if configured).
-func (s *StubProvider) ListIssues(ctx context.Context, limit int) ([]providers.Issue, error) {
+func (s *StubProvider) ListIssues(_ context.Context, limit int) ([]providers.Issue, error) { //nolint:dupl
 	s.recordCall("ListIssues", limit)
 
 	if err, ok := s.Errors["ListIssues"]; ok {
@@ -239,12 +242,10 @@ func (s *StubProvider) ListIssues(ctx context.Context, limit int) ([]providers.I
 		issues = append(issues, *issue)
 	}
 
-	// Sort by ID for consistent ordering
 	sort.Slice(issues, func(i, j int) bool {
 		return issues[i].ID < issues[j].ID
 	})
 
-	// Apply limit if specified
 	if limit > 0 && len(issues) > limit {
 		issues = issues[:limit]
 	}
@@ -253,7 +254,7 @@ func (s *StubProvider) ListIssues(ctx context.Context, limit int) ([]providers.I
 }
 
 // GetIssue returns a specific issue by ID.
-func (s *StubProvider) GetIssue(ctx context.Context, id string) (*providers.Issue, error) {
+func (s *StubProvider) GetIssue(_ context.Context, id string) (*providers.Issue, error) {
 	s.recordCall("GetIssue", id)
 
 	if err, ok := s.Errors["GetIssue"]; ok {
@@ -269,7 +270,7 @@ func (s *StubProvider) GetIssue(ctx context.Context, id string) (*providers.Issu
 }
 
 // IsIssueClosed returns true if an issue is closed.
-func (s *StubProvider) IsIssueClosed(ctx context.Context, id string) (bool, error) {
+func (s *StubProvider) IsIssueClosed(_ context.Context, id string) (bool, error) {
 	s.recordCall("IsIssueClosed", id)
 
 	if err, ok := s.Errors["IsIssueClosed"]; ok {
@@ -285,7 +286,7 @@ func (s *StubProvider) IsIssueClosed(ctx context.Context, id string) (bool, erro
 }
 
 // ListPullRequests returns all pull requests.
-func (s *StubProvider) ListPullRequests(ctx context.Context, limit int) ([]providers.PullRequest, error) {
+func (s *StubProvider) ListPullRequests(_ context.Context, limit int) ([]providers.PullRequest, error) { //nolint:dupl
 	s.recordCall("ListPullRequests", limit)
 
 	if err, ok := s.Errors["ListPullRequests"]; ok {
@@ -297,12 +298,10 @@ func (s *StubProvider) ListPullRequests(ctx context.Context, limit int) ([]provi
 		prs = append(prs, *pr)
 	}
 
-	// Sort by ID for consistent ordering
 	sort.Slice(prs, func(i, j int) bool {
 		return prs[i].ID < prs[j].ID
 	})
 
-	// Apply limit if specified
 	if limit > 0 && len(prs) > limit {
 		prs = prs[:limit]
 	}
@@ -311,7 +310,7 @@ func (s *StubProvider) ListPullRequests(ctx context.Context, limit int) ([]provi
 }
 
 // GetPullRequest returns a specific PR by ID.
-func (s *StubProvider) GetPullRequest(ctx context.Context, id string) (*providers.PullRequest, error) {
+func (s *StubProvider) GetPullRequest(_ context.Context, id string) (*providers.PullRequest, error) {
 	s.recordCall("GetPullRequest", id)
 
 	if err, ok := s.Errors["GetPullRequest"]; ok {
@@ -327,7 +326,7 @@ func (s *StubProvider) GetPullRequest(ctx context.Context, id string) (*provider
 }
 
 // IsPullRequestMerged returns true if a PR is merged.
-func (s *StubProvider) IsPullRequestMerged(ctx context.Context, id string) (bool, error) {
+func (s *StubProvider) IsPullRequestMerged(_ context.Context, id string) (bool, error) {
 	s.recordCall("IsPullRequestMerged", id)
 
 	if err, ok := s.Errors["IsPullRequestMerged"]; ok {
@@ -343,14 +342,13 @@ func (s *StubProvider) IsPullRequestMerged(ctx context.Context, id string) (bool
 }
 
 // CreateIssue creates a new issue.
-func (s *StubProvider) CreateIssue(ctx context.Context, title, body string) (*providers.Issue, error) {
+func (s *StubProvider) CreateIssue(_ context.Context, title, body string) (*providers.Issue, error) {
 	s.recordCall("CreateIssue", map[string]string{"title": title, "body": body})
 
 	if err, ok := s.Errors["CreateIssue"]; ok {
 		return nil, err
 	}
 
-	// Generate a new ID
 	newID := fmt.Sprintf("%d", len(s.Issues)+1)
 	issue := &providers.Issue{
 		ID:        newID,
@@ -364,11 +362,12 @@ func (s *StubProvider) CreateIssue(ctx context.Context, title, body string) (*pr
 	}
 
 	s.AddIssue(issue)
+
 	return issue, nil
 }
 
 // CreatePullRequest creates a new PR.
-func (s *StubProvider) CreatePullRequest(ctx context.Context, title, body, baseBranch, headBranch string) (*providers.PullRequest, error) {
+func (s *StubProvider) CreatePullRequest(_ context.Context, title, body, baseBranch, headBranch string) (*providers.PullRequest, error) {
 	s.recordCall("CreatePullRequest", map[string]string{
 		"title":      title,
 		"baseBranch": baseBranch,
@@ -379,23 +378,23 @@ func (s *StubProvider) CreatePullRequest(ctx context.Context, title, body, baseB
 		return nil, err
 	}
 
-	// Generate a new ID
 	newID := fmt.Sprintf("%d", len(s.PullRequests)+1)
 	pr := &providers.PullRequest{
-		ID:        newID,
-		Number:    len(s.PullRequests) + 1,
-		Title:     title,
-		Body:      body,
-		State:     "OPEN",
+		ID:         newID,
+		Number:     len(s.PullRequests) + 1,
+		Title:      title,
+		Body:       body,
+		State:      "OPEN",
 		HeadBranch: headBranch,
 		BaseBranch: baseBranch,
-		IsMerged:  false,
-		IsClosed:  false,
-		CreatedAt: "2025-01-02T15:00:00Z",
-		UpdatedAt: "2025-01-02T15:00:00Z",
+		IsMerged:   false,
+		IsClosed:   false,
+		CreatedAt:  "2025-01-02T15:00:00Z",
+		UpdatedAt:  "2025-01-02T15:00:00Z",
 	}
 
 	s.AddPullRequest(pr)
+
 	return pr, nil
 }
 
@@ -404,30 +403,32 @@ func (s *StubProvider) GetBranchNameSuffix(issue *providers.Issue) string {
 	if issue.Key != "" {
 		return strings.ToLower(issue.Key)
 	}
+
 	return fmt.Sprintf("%d", issue.Number)
 }
 
 // SanitizeBranchName sanitizes a title for use in a branch name.
 func (s *StubProvider) SanitizeBranchName(title string) string {
-	// Lowercase
 	s.recordCall("SanitizeBranchName", title)
+
 	result := strings.ToLower(title)
-	// Remove non-alphanumeric except dashes
 	result = strings.Map(func(r rune) rune {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
 			return r
 		}
+
 		if r == ' ' || r == '_' {
 			return '-'
 		}
+
 		return -1
 	}, result)
-	// Remove leading/trailing dashes
+
 	result = strings.Trim(result, "-")
-	// Limit to 40 characters
 	if len(result) > 40 {
 		result = result[:40]
 	}
+
 	return result
 }
 
@@ -454,11 +455,13 @@ func (s *StubProvider) recordCall(method string, args interface{}) {
 // GetCallCount returns the number of times a method was called.
 func (s *StubProvider) GetCallCount(method string) int {
 	count := 0
+
 	for _, call := range s.Calls {
 		if call.Method == method {
 			count++
 		}
 	}
+
 	return count
 }
 
