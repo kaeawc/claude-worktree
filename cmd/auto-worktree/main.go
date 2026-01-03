@@ -6,31 +6,67 @@ import (
 	"os"
 
 	"github.com/kaeawc/auto-worktree/internal/cmd"
+	"github.com/kaeawc/auto-worktree/internal/perf"
 )
 
 const version = "0.1.0-dev"
 
 func main() {
-	// Perform startup cleanup of orphaned and merged worktrees
-	if err := cmd.RunStartupCleanup(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: startup cleanup encountered an error: %v\n", err)
-		// Don't exit on cleanup errors, continue to menu/command
+	// Initialize performance tracing (enabled via AUTO_WORKTREE_PERF=1 or AUTO_WORKTREE_TRACE=<file>)
+	perf.Init()
+	defer perf.Shutdown()
+
+	endMain := perf.StartSpan("main")
+	defer endMain()
+
+	perf.Mark("process-start")
+
+	// Determine if we need startup cleanup based on command
+	// Skip cleanup for simple commands that don't interact with worktrees
+	needsCleanup := true
+
+	if len(os.Args) >= 2 {
+		switch os.Args[1] {
+		case "version", "--version", "-v", "help", "--help", "-h":
+			needsCleanup = false
+		}
+	}
+
+	// Only run cleanup for commands that need it
+	if needsCleanup {
+		endCleanup := perf.StartSpanWithParent("startup-cleanup", "main")
+
+		if err := cmd.RunStartupCleanup(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: startup cleanup encountered an error: %v\n", err)
+			// Don't exit on cleanup errors, continue to menu/command
+		}
+
+		endCleanup()
+		perf.Mark("cleanup-complete")
 	}
 
 	// If no arguments, show interactive menu
 	if len(os.Args) < 2 {
+		endMenu := perf.StartSpanWithParent("interactive-menu", "main")
+
 		if err := cmd.RunInteractiveMenu(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+			os.Exit(1) //nolint:gocritic // exitAfterDefer: intentional - error path exits immediately
 		}
+
+		endMenu()
 
 		return
 	}
 
+	endCommand := perf.StartSpanWithParent("run-command", "main")
+
 	if err := runCommand(os.Args[1]); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		os.Exit(1) //nolint:gocritic // exitAfterDefer: intentional - error path exits immediately
 	}
+
+	endCommand()
 }
 
 func runCommand(command string) error {

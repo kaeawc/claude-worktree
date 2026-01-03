@@ -20,6 +20,7 @@ import (
 	"github.com/kaeawc/auto-worktree/internal/git"
 	"github.com/kaeawc/auto-worktree/internal/github"
 	"github.com/kaeawc/auto-worktree/internal/hooks"
+	"github.com/kaeawc/auto-worktree/internal/perf"
 	"github.com/kaeawc/auto-worktree/internal/providers"
 	"github.com/kaeawc/auto-worktree/internal/session"
 	"github.com/kaeawc/auto-worktree/internal/ui"
@@ -47,6 +48,7 @@ func RunInteractiveMenu() error {
 // showInteractiveMenu displays the menu and handles one selection.
 // Returns (shouldExit, error) where shouldExit indicates if user wants to exit menu.
 func showInteractiveMenu() (bool, error) {
+	endMenuItems := perf.StartSpan("menu-items-create")
 	items := []ui.MenuItem{
 		ui.NewMenuItem("New Worktree", "Create a new worktree with a new branch", "new"),
 		ui.NewMenuItem("Resume Worktree", "Resume working on the last worktree", "resume"),
@@ -58,11 +60,22 @@ func showInteractiveMenu() (bool, error) {
 		ui.NewMenuItem("Cleanup Worktrees", "Interactive cleanup of merged/stale worktrees", "cleanup"),
 		ui.NewMenuItem("Settings", "Configure per-repository settings", "settings"),
 	}
+	endMenuItems()
 
+	endMenuCreate := perf.StartSpan("menu-model-create")
 	menu := ui.NewMenu("auto-worktree", items)
-	p := tea.NewProgram(menu)
+	endMenuCreate()
 
+	endProgramCreate := perf.StartSpan("tea-program-create")
+	p := tea.NewProgram(menu)
+	endProgramCreate()
+
+	perf.Mark("menu-ready-to-render")
+
+	endProgramRun := perf.StartSpan("tea-program-run")
 	m, err := p.Run()
+	endProgramRun()
+
 	if err != nil {
 		return false, fmt.Errorf("failed to run menu: %w", err)
 	}
@@ -1049,13 +1062,19 @@ func RunPR(prID string) error {
 
 // RunStartupCleanup performs automatic cleanup of orphaned and merged worktrees at startup
 func RunStartupCleanup() error {
+	endRepoInit := perf.StartSpan("cleanup-repo-init")
 	repo, err := git.NewRepository()
+	endRepoInit()
+
 	if err != nil {
 		return fmt.Errorf("error: %w", err)
 	}
 
 	// Get startup cleanup candidates
+	endCandidates := perf.StartSpan("cleanup-get-candidates")
 	candidates, err := repo.GetStartupCleanupCandidates()
+	endCandidates()
+
 	if err != nil {
 		return fmt.Errorf("error finding cleanup candidates: %w", err)
 	}

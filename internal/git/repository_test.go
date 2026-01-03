@@ -125,7 +125,7 @@ func TestNewRepositoryFromPath(t *testing.T) {
 	fakeFS := NewFakeFileSystem()
 
 	// Setup fake git responses
-	fakeExec.SetResponse("rev-parse --git-dir", ".git")
+	// Note: After optimization, we only call rev-parse --show-toplevel (combined check)
 	fakeExec.SetResponse("rev-parse --show-toplevel", "/test/repo")
 
 	// Setup fake filesystem
@@ -151,9 +151,9 @@ func TestNewRepositoryFromPath(t *testing.T) {
 		t.Errorf("WorktreeBase = %v, want %v", repo.WorktreeBase, expectedBase)
 	}
 
-	// Verify commands executed
-	if len(fakeExec.Commands) != 2 {
-		t.Errorf("Expected 2 commands, got %d: %v", len(fakeExec.Commands), fakeExec.Commands)
+	// Verify commands executed (optimized: single combined call instead of two)
+	if len(fakeExec.Commands) != 1 {
+		t.Errorf("Expected 1 command, got %d: %v", len(fakeExec.Commands), fakeExec.Commands)
 	}
 
 	// Verify filesystem operations

@@ -3,6 +3,9 @@ package git
 import (
 	"fmt"
 	"strings"
+	"sync"
+
+	"github.com/kaeawc/auto-worktree/internal/perf"
 )
 
 // Repository represents a Git repository
@@ -41,32 +44,41 @@ func NewRepositoryWithDeps(executor GitExecutor, filesystem FileSystem) (*Reposi
 
 // NewRepositoryFromPathWithDeps creates a Repository instance from the specified path with dependencies
 func NewRepositoryFromPathWithDeps(path string, executor GitExecutor, filesystem FileSystem) (*Repository, error) {
-	// Check if we're in a git repository
-	if !isGitRepository(path, executor) {
-		return nil, fmt.Errorf("not a git repository (or any of the parent directories): %s", path)
-	}
+	endTotal := perf.StartSpan("git-repo-init-total")
+	defer endTotal()
 
-	// Get the repository root
+	// Combined check: verify git repo and get root in one call
+	// This saves ~5ms by avoiding a second subprocess spawn
+	endGetRoot := perf.StartSpanWithParent("git-get-root-combined", "git-repo-init-total")
 	rootPath, err := getRepositoryRoot(path, executor)
+	endGetRoot()
+
 	if err != nil {
-		return nil, fmt.Errorf("failed to get repository root: %w", err)
+		return nil, fmt.Errorf("not a git repository (or any of the parent directories): %s", path)
 	}
 
 	// Get the source folder name
 	sourceFolder := filesystem.Base(rootPath)
 
 	// Construct worktree base path: ~/worktrees/<repo-name>
+	endHomeDir := perf.StartSpanWithParent("git-get-homedir", "git-repo-init-total")
 	homeDir, err := filesystem.UserHomeDir()
+	endHomeDir()
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user home directory: %w", err)
 	}
 	worktreeBase := filesystem.Join(homeDir, "worktrees", sourceFolder)
 
+	endNewConfig := perf.StartSpanWithParent("git-new-config", "git-repo-init-total")
+	config := NewConfig(rootPath)
+	endNewConfig()
+
 	return &Repository{
 		RootPath:     rootPath,
 		WorktreeBase: worktreeBase,
 		SourceFolder: sourceFolder,
-		Config:       NewConfig(rootPath),
+		Config:       config,
 		executor:     executor,
 		filesystem:   filesystem,
 	}, nil
@@ -192,18 +204,32 @@ func (r *Repository) EnrichWorktreeWithMergeStatus(wt *Worktree) error {
 }
 
 // ListWorktreesWithMergeStatus returns all worktrees enriched with merge status
+// Merge status is checked in parallel for better performance
 func (r *Repository) ListWorktreesWithMergeStatus() ([]*Worktree, error) {
+	endList := perf.StartSpan("git-list-worktrees-with-merge-status")
+	defer endList()
+
+	endBasicList := perf.StartSpanWithParent("git-basic-worktree-list", "git-list-worktrees-with-merge-status")
 	worktrees, err := r.ListWorktrees()
+	endBasicList()
+
 	if err != nil {
 		return nil, err
 	}
 
+	// Enrich merge status in parallel
+	endEnrichAll := perf.StartSpanWithParent("git-enrich-merge-status-parallel", "git-list-worktrees-with-merge-status")
+	var wg sync.WaitGroup
 	for _, wt := range worktrees {
-		if err := r.EnrichWorktreeWithMergeStatus(wt); err != nil {
-			// Continue on error, just skip enrichment for this worktree
-			continue
-		}
+		wg.Add(1)
+		go func(w *Worktree) {
+			defer wg.Done()
+			// Errors are non-fatal, continue with partial data
+			_ = r.EnrichWorktreeWithMergeStatus(w)
+		}(wt)
 	}
+	wg.Wait()
+	endEnrichAll()
 
 	return worktrees, nil
 }

@@ -7,7 +7,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/kaeawc/auto-worktree/internal/perf"
 )
 
 // Worktree represents a git worktree
@@ -50,12 +53,19 @@ type IssueStatus struct {
 
 // ListWorktrees returns all worktrees for the repository
 func (r *Repository) ListWorktrees() ([]*Worktree, error) {
+	endList := perf.StartSpan("git-worktree-list")
 	output, err := r.executor.ExecuteInDir(r.RootPath, "worktree", "list", "--porcelain")
+	endList()
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to list worktrees: %w", err)
 	}
 
-	return parseWorktreeList(output, r.executor)
+	endParse := perf.StartSpan("git-worktree-parse-enrich")
+	worktrees, err := parseWorktreeList(output, r.executor)
+	endParse()
+
+	return worktrees, err
 }
 
 // parseWorktreeList parses the output of 'git worktree list --porcelain'
@@ -118,13 +128,19 @@ func parseWorktreeList(output string, executor GitExecutor) ([]*Worktree, error)
 		worktrees = append(worktrees, current)
 	}
 
-	// Enrich worktrees with additional information
+	// Enrich worktrees with additional information in parallel
+	endEnrich := perf.StartSpan("worktree-enrich-parallel")
+	var wg sync.WaitGroup
 	for _, wt := range worktrees {
-		if err := enrichWorktree(wt, executor); err != nil {
-			// Log error but don't fail - continue with partial data
-			continue
-		}
+		wg.Add(1)
+		go func(w *Worktree) {
+			defer wg.Done()
+			// Errors are non-fatal, continue with partial data
+			_ = enrichWorktree(w, executor)
+		}(wt)
 	}
+	wg.Wait()
+	endEnrich()
 
 	return worktrees, scanner.Err()
 }
