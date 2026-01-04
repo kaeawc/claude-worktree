@@ -2296,9 +2296,15 @@ func resolveAICommand(config *git.Config, context string, isResume bool, worktre
 
 	// Determine which command to use (resume vs fresh)
 	var cmd []string
-	if isResume && ai.HasExistingSession(worktreePath) {
-		cmd = tool.ResumeCommandWithContext(context)
-		fmt.Printf("Resuming %s session...\n", tool.Name)
+	if isResume {
+		if ai.HasExistingSession(worktreePath) {
+			cmd = tool.ResumeCommandWithContext(context)
+			fmt.Printf("Resuming %s session...\n", tool.Name)
+		} else {
+			fmt.Println("No conversation found to continue.")
+			fmt.Println("Starting fresh session in worktree...")
+			cmd = tool.CommandWithContext(context)
+		}
 	} else {
 		cmd = tool.CommandWithContext(context)
 		fmt.Printf("Starting %s...\n", tool.Name)
