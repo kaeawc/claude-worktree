@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 )
 
 // GitExecutor defines the interface for executing git commands
@@ -45,6 +46,8 @@ func (e *RealGitExecutor) ExecuteInDir(dir string, args ...string) (string, erro
 
 // FakeGitExecutor is a fake implementation for testing
 type FakeGitExecutor struct {
+	// mu protects concurrent access to Commands slice
+	mu sync.Mutex
 	// Commands records all executed commands for verification
 	Commands [][]string
 	// Responses maps command strings to their responses
@@ -66,7 +69,10 @@ func NewFakeGitExecutor() *FakeGitExecutor {
 
 // Execute records the command and returns a configured response
 func (e *FakeGitExecutor) Execute(args ...string) (string, error) {
+	e.mu.Lock()
 	e.Commands = append(e.Commands, args)
+	e.mu.Unlock()
+
 	key := strings.Join(args, " ")
 
 	if err, ok := e.Errors[key]; ok {
@@ -84,7 +90,10 @@ func (e *FakeGitExecutor) Execute(args ...string) (string, error) {
 func (e *FakeGitExecutor) ExecuteInDir(dir string, args ...string) (string, error) {
 	// Record with directory context
 	cmdWithDir := append([]string{"[in:" + dir + "]"}, args...)
+
+	e.mu.Lock()
 	e.Commands = append(e.Commands, cmdWithDir)
+	e.mu.Unlock()
 
 	key := strings.Join(args, " ")
 
@@ -111,19 +120,29 @@ func (e *FakeGitExecutor) SetError(command string, err error) {
 
 // GetCommandCount returns the number of commands executed
 func (e *FakeGitExecutor) GetCommandCount() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	return len(e.Commands)
 }
 
 // GetLastCommand returns the last executed command, or nil if none
 func (e *FakeGitExecutor) GetLastCommand() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	if len(e.Commands) == 0 {
 		return nil
 	}
+
 	return e.Commands[len(e.Commands)-1]
 }
 
 // Reset clears all recorded commands and responses
 func (e *FakeGitExecutor) Reset() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	e.Commands = [][]string{}
 	e.Responses = make(map[string]string)
 	e.Errors = make(map[string]error)
