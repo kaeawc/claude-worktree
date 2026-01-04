@@ -83,7 +83,7 @@ func runCommand(command string) error {
 		return cmd.RunList()
 
 	case "new", "create":
-		return cmd.RunNew()
+		return cmd.RunNew(false)
 
 	case "resume":
 		return cmd.RunResume()

@@ -49,6 +49,11 @@ func RunInteractiveMenu() error {
 // showInteractiveMenu displays the menu and handles one selection.
 // Returns (shouldExit, error) where shouldExit indicates if user wants to exit menu.
 func showInteractiveMenu() (bool, error) {
+	if err := RunList(); err != nil {
+		return false, err
+	}
+	fmt.Println()
+
 	endMenuItems := perf.StartSpan("menu-items-create")
 	items := []ui.MenuItem{
 		ui.NewMenuItem("New Worktree", "Create a new worktree with a new branch", "new"),
@@ -103,7 +108,7 @@ func routeMenuChoice(choice string, _ bool) error {
 
 	switch choice {
 	case "new":
-		err = RunNew()
+		err = RunNew(true)
 	case "resume":
 		err = RunResume()
 	case "issue":
@@ -236,10 +241,17 @@ func getSessionStatusIndicator(metadata *session.Metadata) string {
 }
 
 // RunNew creates a new worktree.
-func RunNew() error {
+func RunNew(skipList bool) error {
 	repo, err := git.NewRepository()
 	if err != nil {
 		return fmt.Errorf("error: %w", err)
+	}
+
+	if !skipList {
+		if err := RunList(); err != nil {
+			return err
+		}
+		fmt.Println()
 	}
 
 	branchName, useExisting, err := getBranchInput(repo)
