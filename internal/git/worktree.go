@@ -29,6 +29,8 @@ type Worktree struct {
 	UnpushedCount int
 	// IsBranchMerged indicates if the branch has been merged into the default branch
 	IsBranchMerged bool
+	// HasNoChanges indicates if the worktree HEAD matches the default branch HEAD
+	HasNoChanges bool
 	// IssueStatus holds the status from external providers (GitHub, JIRA, etc.)
 	IssueStatus *IssueStatus
 	// executor is the git command executor for this worktree

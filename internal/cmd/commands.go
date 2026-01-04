@@ -22,6 +22,7 @@ import (
 	"github.com/kaeawc/auto-worktree/internal/github"
 	"github.com/kaeawc/auto-worktree/internal/hooks"
 	"github.com/kaeawc/auto-worktree/internal/perf"
+	"github.com/kaeawc/auto-worktree/internal/provider"
 	"github.com/kaeawc/auto-worktree/internal/providers"
 	"github.com/kaeawc/auto-worktree/internal/session"
 	"github.com/kaeawc/auto-worktree/internal/terminal"
@@ -142,9 +143,12 @@ func RunList() error {
 		return fmt.Errorf("error: %w", err)
 	}
 
-	// Use ListWorktreesWithMergeStatusExcludingMain to get merge status information,
+	// Get provider for issue/PR status enrichment (provider is optional, errors ignored)
+	prov, _ := GetProviderForRepository(repo) //nolint:errcheck
+
+	// Use ListWorktreesWithAllStatusExcludingMain to get all status information,
 	// excluding the main repository root
-	worktrees, err := repo.ListWorktreesWithMergeStatusExcludingMain()
+	worktrees, err := repo.ListWorktreesWithAllStatusExcludingMain(prov)
 	if err != nil {
 		return fmt.Errorf("error listing worktrees: %w", err)
 	}
@@ -164,10 +168,16 @@ func RunList() error {
 		}
 	}
 
+	// Get current working directory for active worktree indicator (errors ignored)
+	currentWtPath, _ := os.Getwd() //nolint:errcheck
+
 	fmt.Printf("Repository: %s\n", repo.SourceFolder)
 	fmt.Printf("Worktree base: %s\n\n", repo.WorktreeBase)
-	fmt.Printf("%-45s %-20s %-12s %-15s %-10s %s\n", "PATH", "BRANCH", "AGE", "STATUS", "SESSION", "UNPUSHED")
-	fmt.Println(strings.Repeat("-", 130))
+	fmt.Printf("  %-45s %-20s %-12s %-20s %-10s %s\n", "PATH", "BRANCH", "AGE", "STATUS", "SESSION", "UNPUSHED")
+	fmt.Println(strings.Repeat("-", 135))
+
+	// Collect cleanup candidates for later prompt
+	var cleanupWorktrees []*git.Worktree
 
 	for _, wt := range worktrees {
 		path := wt.Path
@@ -177,18 +187,27 @@ func RunList() error {
 			branch = fmt.Sprintf("(detached @ %s)", wt.HEAD[:7])
 		}
 
-		age := formatAge(wt.Age())
-		unpushed := ""
+		// Format age with color based on worktree age
+		ageStr := formatAge(wt.Age())
+		ageStyle := ui.GetWorktreeAgeStyle(wt.Age())
+		age := ageStyle.Render(ageStr)
 
+		unpushed := ""
 		if wt.UnpushedCount > 0 {
-			unpushed = fmt.Sprintf("%d commits", wt.UnpushedCount)
+			unpushed = ui.WarningStyle.Render(fmt.Sprintf("%d commits", wt.UnpushedCount))
 		} else if !wt.IsDetached {
-			unpushed = "up to date"
+			unpushed = ui.SuccessStyle.Render("up to date")
 		}
 
 		// Truncate path if too long
 		if len(path) > 43 {
 			path = "..." + path[len(path)-40:]
+		}
+
+		// Active worktree indicator
+		activeIndicator := "  "
+		if wt.Path == currentWtPath {
+			activeIndicator = ui.ActiveWorktreeStyle.Render("► ")
 		}
 
 		// Get status indicator
@@ -200,26 +219,79 @@ func RunList() error {
 			sessionStatus = getSessionStatusIndicator(metadata)
 		}
 
-		fmt.Printf("%-45s %-20s %-12s %-15s %-10s %s\n", path, branch, age, status, sessionStatus, unpushed)
+		fmt.Printf("%s%-45s %-20s %-12s %-20s %-10s %s\n", activeIndicator, path, branch, age, status, sessionStatus, unpushed)
+
+		// Collect cleanup candidates
+		if wt.ShouldCleanup() {
+			cleanupWorktrees = append(cleanupWorktrees, wt)
+		}
 	}
 
 	fmt.Printf("\nTotal: %d worktree(s)\n", len(worktrees))
 
+	// Show cleanup prompt if there are candidates
+	if len(cleanupWorktrees) > 0 {
+		if err := promptForCleanup(repo, cleanupWorktrees); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
-// getStatusIndicator returns a status string for the worktree
+// getStatusIndicator returns a styled status string for the worktree
 func getStatusIndicator(wt *git.Worktree) string {
-	if wt.IsMerged() {
-		return "[merged]"
+	// Priority 1: Issue/PR status from external provider
+	if wt.IssueStatus != nil {
+		status := wt.IssueStatus
+
+		// Merged/Completed (magenta)
+		if status.IsCompleted {
+			switch status.Provider {
+			case provider.ProviderTypeGitHubIssue:
+				return ui.MergedStyle.Render(fmt.Sprintf("[merged #%s]", status.ID))
+			case provider.ProviderTypeGitHubPR:
+				return ui.MergedStyle.Render("[PR merged]")
+			case provider.ProviderTypeGitLabMR:
+				return ui.MergedStyle.Render("[MR merged]")
+			case provider.ProviderTypeJira:
+				return ui.MergedStyle.Render(fmt.Sprintf("[resolved %s]", status.ID))
+			case provider.ProviderTypeLinear:
+				return ui.MergedStyle.Render(fmt.Sprintf("[completed %s]", status.ID))
+			default:
+				return ui.MergedStyle.Render("[merged]")
+			}
+		}
+
+		// Closed (check for unpushed commits)
+		if status.IsClosed {
+			if wt.UnpushedCount > 0 {
+				// Closed with warning (yellow)
+				return ui.ClosedWithWarningStyle.Render(fmt.Sprintf("[closed #%s ⚠]", status.ID))
+			}
+			// Closed without unpushed (magenta)
+			return ui.MergedStyle.Render(fmt.Sprintf("[closed #%s]", status.ID))
+		}
 	}
+
+	// Priority 2: No changes from default (gray)
+	if wt.HasNoChanges && wt.UnpushedCount == 0 {
+		return ui.NoChangesStyle.Render("[no changes]")
+	}
+
+	// Priority 3: Git merged (magenta)
+	if wt.IsBranchMerged {
+		return ui.MergedStyle.Render("[git-merged]")
+	}
+
+	// Priority 4: Stale (age-based color)
 	if wt.IsStale() {
 		days := int(wt.Age().Hours() / 24)
-		return fmt.Sprintf("[stale %dd]", days)
+		ageStyle := ui.GetWorktreeAgeStyle(wt.Age())
+		return ageStyle.Render(fmt.Sprintf("[stale %dd]", days))
 	}
-	if wt.IsBranchMerged {
-		return "[git-merged]"
-	}
+
+	// Default: no special status
 	return "-"
 }
 
@@ -239,6 +311,60 @@ func getSessionStatusIndicator(metadata *session.Metadata) string {
 	default:
 		return "❓ unknown"
 	}
+}
+
+// promptForCleanup shows an interactive prompt for cleaning up worktrees
+func promptForCleanup(repo *git.Repository, worktrees []*git.Worktree) error {
+	fmt.Println()
+	fmt.Println(ui.MergedStyle.Render("Worktrees that can be cleaned up:"))
+	fmt.Println()
+
+	// Display cleanup candidates
+	for _, wt := range worktrees {
+		basename := filepath.Base(wt.Path)
+		reason := wt.CleanupReason()
+		fmt.Printf("  • %s (%s) - %s\n", basename, wt.Branch, reason)
+	}
+
+	fmt.Println()
+
+	// Show confirmation prompt using bubbletea
+	p := tea.NewProgram(ui.NewCleanupConfirmation(len(worktrees), 0))
+	model, err := p.Run()
+	if err != nil {
+		return fmt.Errorf("error running cleanup prompt: %w", err)
+	}
+
+	confirmModel, ok := model.(ui.CleanupConfirmationModel)
+	if !ok || !confirmModel.WasConfirmed() {
+		return nil
+	}
+
+	// Perform cleanup
+	fmt.Println()
+	for _, wt := range worktrees {
+		basename := filepath.Base(wt.Path)
+		fmt.Printf("Removing %s...\n", basename)
+
+		// Remove worktree
+		if err := repo.RemoveWorktree(wt.Path); err != nil {
+			fmt.Printf("  %s Failed to remove: %v\n", ui.ErrorStyle.Render("✗"), err)
+			continue
+		}
+		fmt.Printf("  %s Worktree removed\n", ui.SuccessStyle.Render("✓"))
+
+		// Delete branch if it exists
+		if wt.Branch != "" {
+			if err := repo.DeleteBranch(wt.Branch); err != nil {
+				// Branch deletion failure is not critical
+				fmt.Printf("  %s Failed to delete branch: %v\n", ui.WarningStyle.Render("!"), err)
+			} else {
+				fmt.Printf("  %s Branch deleted\n", ui.SuccessStyle.Render("✓"))
+			}
+		}
+	}
+
+	return nil
 }
 
 // RunNew creates a new worktree.
