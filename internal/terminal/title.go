@@ -1,3 +1,4 @@
+// Package terminal provides helpers for terminal-specific behavior.
 package terminal
 
 import (
@@ -11,5 +12,6 @@ func SetTitle(title string) {
 		return
 	}
 
-	fmt.Fprintf(os.Stdout, "\033]0;%s\007", title)
+	//nolint:errcheck
+	_, _ = fmt.Fprintf(os.Stdout, "\033]0;%s\007", title)
 }
