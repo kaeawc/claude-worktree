@@ -24,6 +24,7 @@ import (
 	"github.com/kaeawc/auto-worktree/internal/perf"
 	"github.com/kaeawc/auto-worktree/internal/providers"
 	"github.com/kaeawc/auto-worktree/internal/session"
+	"github.com/kaeawc/auto-worktree/internal/terminal"
 	"github.com/kaeawc/auto-worktree/internal/ui"
 )
 
@@ -275,6 +276,7 @@ func RunNew(skipList bool) error {
 	}
 
 	fmt.Printf("✓ Worktree created at: %s\n", worktreePath)
+	terminal.SetTitle(branchName)
 
 	// Create tmux session with metadata
 	sessionMgr := session.NewManager()
@@ -562,6 +564,7 @@ func RunResume() error {
 	if selectedWorktree == nil {
 		return fmt.Errorf("selected worktree not found")
 	}
+	terminal.SetTitle(formatResumeTitleForTerminal(selectedWorktree))
 
 	// Run post-worktree hooks before resuming
 	if err := runPostWorktreeHooks(selectedWorktree.Path, repo.RootPath); err != nil {
@@ -690,6 +693,76 @@ func runIssueWithProvider(issueID string, repo *git.Repository, provider provide
 
 	if existingWt != nil {
 		fmt.Printf("✓ Worktree already exists at: %s\n", existingWt.Path)
+
+		resumePrompt := "Continue where we left off. Ask clarifying questions as I am resuming working on this issue after some time."
+		terminal.SetTitle(formatIssueTitleForTerminal(issue))
+
+		confirmModel := ui.NewConfirmModel(resumePrompt)
+		p := tea.NewProgram(confirmModel)
+		result, err := p.Run()
+		if err != nil {
+			return fmt.Errorf("error getting resume confirmation: %w", err)
+		}
+
+		confirmed, ok := result.(ui.ConfirmModel)
+		if !ok {
+			return fmt.Errorf("unexpected model type")
+		}
+
+		if !confirmed.GetChoice() {
+			return nil
+		}
+
+		if err := runPostWorktreeHooks(existingWt.Path, repo.RootPath); err != nil {
+			fmt.Printf("⚠ Hook execution warning: %v\n", err)
+		}
+
+		sessionMgr := session.NewManager()
+		if sessionMgr.IsAvailable() {
+			sessionName := session.GenerateSessionName(existingWt.Branch)
+			exists, err := sessionMgr.HasSession(sessionName)
+			if err != nil {
+				return fmt.Errorf("failed to check session existence: %w", err)
+			}
+
+			if exists {
+				fmt.Printf("Attaching to session: %s\n", sessionName)
+				if err := sessionMgr.AttachToSession(sessionName); err != nil {
+					fmt.Printf("⚠ Failed to attach to session: %v\n", err)
+					fmt.Printf("To resume manually:\n")
+					fmt.Printf("  cd %s\n", existingWt.Path)
+				}
+				return nil
+			}
+
+			fmt.Println("\nNo existing session found. Creating new session...")
+			config := git.NewConfig(repo.RootPath)
+			issueContext := buildIssueContext(issue, provider.Name())
+			resumeContext := fmt.Sprintf("%s\n\n%s", issueContext, resumePrompt)
+
+			aiCommand, err := resolveAICommand(config, resumeContext, true, existingWt.Path)
+			if err != nil {
+				fmt.Printf("⚠ Warning: %v\n", err)
+			}
+
+			if err := createSessionWithAICommand(sessionMgr, config, sessionName, existingWt.Branch, existingWt.Path, aiCommand); err != nil {
+				return fmt.Errorf("failed to create tmux session: %w", err)
+			}
+			fmt.Printf("✓ Tmux session created: %s\n", sessionName)
+
+			fmt.Printf("\nAttaching to session: %s\n", sessionName)
+			if err := sessionMgr.AttachToSession(sessionName); err != nil {
+				fmt.Printf("⚠ Failed to attach to session: %v\n", err)
+				fmt.Printf("To attach manually:\n")
+				fmt.Printf("  tmux attach-session -t %s\n", sessionName)
+			}
+			return nil
+		}
+
+		fmt.Printf("Worktree: %s\n", existingWt.Branch)
+		fmt.Printf("Path: %s\n", existingWt.Path)
+		fmt.Printf("\nTo resume working:\n")
+		fmt.Printf("  cd %s\n", existingWt.Path)
 		return nil
 	}
 
@@ -721,6 +794,7 @@ func runIssueWithProvider(issueID string, repo *git.Repository, provider provide
 
 	// 8. Display success message
 	fmt.Printf("\n✓ Worktree created at: %s\n", worktreePath)
+	terminal.SetTitle(formatIssueTitleForTerminal(issue))
 
 	// 9. Run post-worktree hooks
 	if err := runPostWorktreeHooks(worktreePath, repo.RootPath); err != nil {
@@ -1153,6 +1227,7 @@ func RunPR(prID string) error {
 	fmt.Printf("\n✓ Worktree created at: %s\n", worktreePath)
 	fmt.Printf("\nPR #%d: %s\n", pr.Number, pr.Title)
 	fmt.Printf("URL: %s\n", pr.URL)
+	terminal.SetTitle(formatPRTitleForTerminal(pr))
 
 	// 16. Create tmux session with AI tool for PR review
 	sessionMgr := session.NewManager()
@@ -2257,6 +2332,78 @@ func buildIssueContext(issue *providers.Issue, providerName string) string {
 	}
 	sb.WriteString("\nPlease review the issue and start implementing it.")
 	return sb.String()
+}
+
+func formatIssueTitleForTerminal(issue *providers.Issue) string {
+	if issue == nil {
+		return ""
+	}
+
+	title := strings.TrimSpace(issue.Title)
+	id := strings.TrimSpace(issue.ID)
+	if id == "" {
+		id = strings.TrimSpace(issue.Key)
+	}
+
+	prefix := formatIssuePrefix(id)
+	return formatTerminalTitle(prefix, title)
+}
+
+func formatPRTitleForTerminal(pr *github.PullRequest) string {
+	if pr == nil {
+		return ""
+	}
+
+	title := strings.TrimSpace(pr.Title)
+	prefix := fmt.Sprintf("PR #%d", pr.Number)
+	return formatTerminalTitle(prefix, title)
+}
+
+func formatIssuePrefix(id string) string {
+	if id == "" {
+		return "Issue"
+	}
+
+	if isNumeric(id) {
+		return fmt.Sprintf("Issue #%s", id)
+	}
+
+	return fmt.Sprintf("Issue %s", id)
+}
+
+func isNumeric(value string) bool {
+	if value == "" {
+		return false
+	}
+
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+
+	return true
+}
+
+func formatResumeTitleForTerminal(worktree *git.Worktree) string {
+	if worktree == nil {
+		return ""
+	}
+
+	branch := strings.TrimSpace(worktree.Branch)
+	if branch != "" {
+		return branch
+	}
+
+	return filepath.Base(worktree.Path)
+}
+
+func formatTerminalTitle(prefix, title string) string {
+	if title == "" {
+		return prefix
+	}
+
+	return fmt.Sprintf("%s - %s", prefix, title)
 }
 
 // resolveAICommand determines the AI tool to use and returns the command.
