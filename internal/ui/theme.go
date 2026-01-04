@@ -23,6 +23,11 @@ var (
 	MergedStyle    = lipgloss.NewStyle().Foreground(ColorMagenta)
 	HighlightStyle = lipgloss.NewStyle().Foreground(ColorCyan)
 
+	// Status indicator styles
+	ClosedWithWarningStyle = lipgloss.NewStyle().Foreground(ColorYellow).Bold(true)
+	ActiveWorktreeStyle    = lipgloss.NewStyle().Foreground(ColorCyan).Bold(true)
+	NoChangesStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("8")) // Gray
+
 	// List item styles
 	SelectedItemStyle = lipgloss.NewStyle().
 				Foreground(ColorCyan).

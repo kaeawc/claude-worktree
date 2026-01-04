@@ -1,11 +1,14 @@
 package git
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
 
 	"github.com/kaeawc/auto-worktree/internal/perf"
+	"github.com/kaeawc/auto-worktree/internal/provider"
+	"github.com/kaeawc/auto-worktree/internal/providers"
 )
 
 // Repository represents a Git repository
@@ -201,6 +204,138 @@ func (r *Repository) EnrichWorktreeWithMergeStatus(wt *Worktree) error {
 	}
 
 	return nil
+}
+
+// EnrichWorktreeWithProviderStatus adds issue/PR status from external providers
+func (r *Repository) EnrichWorktreeWithProviderStatus(wt *Worktree, p providers.Provider) error {
+	// Skip if no provider or no branch
+	if p == nil || wt.Branch == "" || wt.IsDetached {
+		return nil
+	}
+
+	// Get configured provider type for branch parsing
+	providerType := ""
+	if r.Config != nil {
+		providerType = r.Config.GetIssueProvider()
+	}
+
+	// Parse branch name to extract issue/PR ID
+	parsedType, id, found := provider.ParseBranchNameWithProvider(wt.Branch, providerType)
+	if !found {
+		return nil
+	}
+
+	// Create IssueStatus
+	wt.IssueStatus = &IssueStatus{
+		Provider: parsedType,
+		ID:       id,
+	}
+
+	ctx := context.Background()
+
+	// Check status based on type
+	switch parsedType {
+	case provider.ProviderTypeGitHubPR, provider.ProviderTypeGitLabMR:
+		// PR/MR status
+		isMerged, err := p.IsPullRequestMerged(ctx, id)
+		if err == nil {
+			wt.IssueStatus.IsCompleted = isMerged
+			wt.IssueStatus.IsClosed = isMerged
+		}
+
+	case provider.ProviderTypeGitHubIssue:
+		// GitHub issue - check if closed
+		isClosed, err := p.IsIssueClosed(ctx, id)
+		if err == nil {
+			wt.IssueStatus.IsClosed = isClosed
+			// For GitHub, IsIssueClosed actually checks if there's a merged PR for this issue
+			// so if closed, we can assume it's completed
+			wt.IssueStatus.IsCompleted = isClosed
+		}
+
+	case provider.ProviderTypeJira, provider.ProviderTypeLinear:
+		// JIRA/Linear - check if closed (which means resolved/completed)
+		isClosed, err := p.IsIssueClosed(ctx, id)
+		if err == nil {
+			wt.IssueStatus.IsClosed = isClosed
+			wt.IssueStatus.IsCompleted = isClosed
+		}
+	}
+
+	return nil
+}
+
+// EnrichWorktreeWithNoChangesCheck checks if worktree has no changes from default branch
+func (r *Repository) EnrichWorktreeWithNoChangesCheck(wt *Worktree) error {
+	// Skip if detached or already marked as merged
+	if wt.IsDetached || wt.IsBranchMerged {
+		return nil
+	}
+
+	// Get default branch
+	defaultBranch, err := r.GetDefaultBranch()
+	if err != nil {
+		return nil // Non-fatal
+	}
+
+	// Don't check if this IS the default branch
+	if wt.Branch == defaultBranch {
+		return nil
+	}
+
+	// Get HEAD commit of worktree
+	wtHead, err := r.executor.ExecuteInDir(wt.Path, "rev-parse", "HEAD")
+	if err != nil {
+		return nil
+	}
+
+	// Get HEAD commit of default branch
+	defaultHead, err := r.executor.ExecuteInDir(r.RootPath, "rev-parse", defaultBranch)
+	if err != nil {
+		return nil
+	}
+
+	// Compare commits
+	wt.HasNoChanges = strings.TrimSpace(wtHead) == strings.TrimSpace(defaultHead)
+
+	return nil
+}
+
+// ListWorktreesWithAllStatus returns all worktrees enriched with merge, provider, and no-changes status
+func (r *Repository) ListWorktreesWithAllStatus(p providers.Provider) ([]*Worktree, error) {
+	endList := perf.StartSpan("git-list-worktrees-with-all-status")
+	defer endList()
+
+	worktrees, err := r.ListWorktrees()
+	if err != nil {
+		return nil, err
+	}
+
+	// Enrich all status in parallel
+	var wg sync.WaitGroup
+	for _, wt := range worktrees {
+		wg.Add(1)
+		go func(w *Worktree, prov providers.Provider) {
+			defer wg.Done()
+			// Errors are non-fatal, continue with partial data
+			_ = r.EnrichWorktreeWithMergeStatus(w)
+			_ = r.EnrichWorktreeWithProviderStatus(w, prov)
+			_ = r.EnrichWorktreeWithNoChangesCheck(w)
+		}(wt, p)
+	}
+	wg.Wait()
+
+	return worktrees, nil
+}
+
+// ListWorktreesWithAllStatusExcludingMain returns all worktrees enriched with all status,
+// excluding the main/root repository
+func (r *Repository) ListWorktreesWithAllStatusExcludingMain(p providers.Provider) ([]*Worktree, error) {
+	worktrees, err := r.ListWorktreesWithAllStatus(p)
+	if err != nil {
+		return nil, err
+	}
+	return r.FilterOutMainBranch(worktrees), nil
 }
 
 // ListWorktreesWithMergeStatus returns all worktrees enriched with merge status
