@@ -2,6 +2,7 @@
 package ai
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -146,6 +147,37 @@ func TestHasExistingSession(t *testing.T) {
 				t.Errorf("HasExistingSession() = %v, want %v", result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestHasExistingSessionCodex(t *testing.T) {
+	tempDir := t.TempDir()
+	codexHome := filepath.Join(tempDir, "codex-home")
+	sessionDir := filepath.Join(codexHome, "sessions", "2026", "01", "01")
+	if err := os.MkdirAll(sessionDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	worktreePath := filepath.Join(tempDir, "worktree")
+	if err := os.MkdirAll(worktreePath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	sessionFile := filepath.Join(sessionDir, "rollout-1.jsonl")
+	// Use json.Marshal to properly escape the path (handles Windows backslashes)
+	cwdJSON, err := json.Marshal(worktreePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionLine := `{"type":"session_meta","payload":{"cwd":` + string(cwdJSON) + `}}` + "\n"
+	if err := os.WriteFile(sessionFile, []byte(sessionLine), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("CODEX_HOME", codexHome)
+
+	if !HasExistingSession(worktreePath) {
+		t.Errorf("HasExistingSession() = false, want true for codex session")
 	}
 }
 

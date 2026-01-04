@@ -2,10 +2,14 @@
 package ai
 
 import (
+	"bufio"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/kaeawc/auto-worktree/internal/git"
 )
@@ -166,6 +170,98 @@ func HasExistingSession(worktreePath string) bool {
 
 	// Other tools may have their own session markers
 	// Add checks here as needed for codex, gemini, jules
+	if hasCodexSession(worktreePath) {
+		return true
+	}
+
+	return false
+}
+
+type codexSessionMeta struct {
+	Type    string `json:"type"`
+	Payload struct {
+		Cwd string `json:"cwd"`
+	} `json:"payload"`
+}
+
+// errCodexSessionFound is a sentinel error used to short-circuit the walk.
+var errCodexSessionFound = errors.New("codex session found")
+
+func hasCodexSession(worktreePath string) bool {
+	sessionsDir := getCodexSessionsDir()
+	if sessionsDir == "" {
+		return false
+	}
+
+	if _, err := os.Stat(sessionsDir); err != nil {
+		return false
+	}
+
+	err := filepath.WalkDir(sessionsDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil || entry.IsDir() || filepath.Ext(entry.Name()) != ".jsonl" {
+			return nil
+		}
+
+		if checkCodexSessionFile(path, worktreePath) {
+			return errCodexSessionFound
+		}
+
+		return nil
+	})
+
+	return errors.Is(err, errCodexSessionFound)
+}
+
+func getCodexSessionsDir() string {
+	codexHome := os.Getenv("CODEX_HOME")
+
+	if codexHome == "" {
+		homeDir := os.Getenv("HOME")
+		if homeDir == "" {
+			return ""
+		}
+
+		codexHome = filepath.Join(homeDir, ".codex")
+	}
+
+	return filepath.Join(codexHome, "sessions")
+}
+
+func checkCodexSessionFile(path, worktreePath string) bool {
+	file, err := os.Open(path) //nolint:gosec // path comes from filepath.WalkDir
+	if err != nil {
+		return false
+	}
+
+	defer file.Close() //nolint:errcheck // read-only file, error on close is not actionable
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	lineCount := 0
+
+	for scanner.Scan() {
+		lineCount++
+
+		if lineCount > 200 {
+			break
+		}
+
+		line := scanner.Text()
+
+		if !strings.Contains(line, "session_meta") {
+			continue
+		}
+
+		var meta codexSessionMeta
+		if err := json.Unmarshal([]byte(line), &meta); err != nil {
+			continue
+		}
+
+		if meta.Type == "session_meta" && meta.Payload.Cwd == worktreePath {
+			return true
+		}
+	}
 
 	return false
 }
