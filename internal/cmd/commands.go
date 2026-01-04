@@ -287,21 +287,18 @@ func RunNew() error {
 		fmt.Println("\nSetting up tmux session...")
 		config := git.NewConfig(repo.RootPath)
 
-		// Get configured shell or use user's default shell
-		configuredShell := config.GetWithDefault(git.ConfigTmuxShell, "", git.ConfigScopeAuto)
-		shellCommand := session.GetShellCommand(configuredShell)
+		// Resolve AI command (no context for new worktree without issue)
+		aiCommand, err := resolveAICommand(config, "", false, worktreePath)
+		if err != nil {
+			fmt.Printf("⚠ Warning: %v\n", err)
+			// Continue without AI
+		}
 
-		err := createSessionWithMetadata(sessionMgr, config, sessionName, branchName, worktreePath, shellCommand)
+		err = createSessionWithAICommand(sessionMgr, config, sessionName, branchName, worktreePath, aiCommand)
 		if err != nil {
 			return fmt.Errorf("failed to create tmux session: %w", err)
 		}
 		fmt.Printf("✓ Tmux session created: %s\n", sessionName)
-
-		// Start AI tool if configured
-		if err := startAIInSession(sessionMgr, config, sessionName); err != nil {
-			fmt.Printf("⚠ Note: %v\n", err)
-			// Non-fatal - continue with session
-		}
 	}
 
 	// Attach to the session
@@ -573,7 +570,36 @@ func RunResume() error {
 		return nil
 	}
 
-	// Fallback: show path
+	// No existing session - create one with AI resume command if AI session exists
+	if sessionMgr.IsAvailable() {
+		fmt.Println("\nNo existing session found. Creating new session...")
+		config := git.NewConfig(repo.RootPath)
+
+		// Resolve AI command with resume flag (no new context, just resume)
+		aiCommand, err := resolveAICommand(config, "", true, selectedWorktree.Path)
+		if err != nil {
+			fmt.Printf("⚠ Warning: %v\n", err)
+			// Continue without AI
+		}
+
+		err = createSessionWithAICommand(sessionMgr, config, sessionName, selectedWorktree.Branch, selectedWorktree.Path, aiCommand)
+		if err != nil {
+			return fmt.Errorf("failed to create tmux session: %w", err)
+		}
+		fmt.Printf("✓ Tmux session created: %s\n", sessionName)
+
+		// Attach to the new session
+		fmt.Printf("\nAttaching to session: %s\n", sessionName)
+		if err := sessionMgr.AttachToSession(sessionName); err != nil {
+			fmt.Printf("⚠ Failed to attach to session: %v\n", err)
+			fmt.Printf("To attach manually:\n")
+			fmt.Printf("  tmux attach-session -t %s\n", sessionName)
+			return nil
+		}
+		return nil
+	}
+
+	// Fallback: show path (no tmux available)
 	fmt.Printf("Worktree: %s\n", selectedWorktree.Branch)
 	fmt.Printf("Path: %s\n", selectedWorktree.Path)
 	fmt.Printf("\nTo resume working:\n")
@@ -689,10 +715,49 @@ func runIssueWithProvider(issueID string, repo *git.Repository, provider provide
 		return fmt.Errorf("hook execution failed: %w", err)
 	}
 
-	// 10. Start AI tool in background session
-	if err := startAISessionGeneric(worktreePath, branchName, repo.RootPath, issue); err != nil {
-		fmt.Printf("Warning: failed to start AI session: %v\n", err)
+	// 10. Create tmux session with AI tool
+	sessionMgr := session.NewManager()
+	if !sessionMgr.IsAvailable() {
+		if err := handleMissingTmux(); err != nil {
+			return err
+		}
+		// Retry after installation
+		sessionMgr = session.NewManager()
+		if !sessionMgr.IsAvailable() {
+			return fmt.Errorf("tmux is still not available after installation attempt")
+		}
 	}
+
+	sessionName := session.GenerateSessionName(branchName)
+	exists, err := sessionMgr.HasSession(sessionName)
+	if err != nil {
+		return fmt.Errorf("failed to check session existence: %w", err)
+	}
+
+	if !exists {
+		fmt.Println("\nSetting up tmux session...")
+		config := git.NewConfig(repo.RootPath)
+
+		// Build issue context for AI tool
+		issueContext := buildIssueContext(issue, provider.Name())
+
+		// Resolve AI command with issue context
+		aiCommand, err := resolveAICommand(config, issueContext, false, worktreePath)
+		if err != nil {
+			fmt.Printf("⚠ Warning: %v\n", err)
+			// Continue without AI
+		}
+
+		err = createSessionWithAICommand(sessionMgr, config, sessionName, branchName, worktreePath, aiCommand)
+		if err != nil {
+			return fmt.Errorf("failed to create tmux session: %w", err)
+		}
+		fmt.Printf("✓ Tmux session created: %s\n", sessionName)
+	}
+
+	fmt.Printf("\nTo start working, attach to the session:\n")
+	fmt.Printf("  tmux attach-session -t %s\n", sessionName)
+	fmt.Printf("\nOr use auto-worktree resume to attach\n")
 
 	return nil
 }
@@ -747,23 +812,6 @@ func selectIssueInteractiveGeneric(ctx context.Context, provider providers.Provi
 	}
 
 	return &issues[idx], nil
-}
-
-// startAISessionGeneric starts AI session for any provider
-//
-//nolint:unparam
-func startAISessionGeneric(_ string, _ string, rootPath string, issue *providers.Issue) error {
-	// This is a simplified version - full implementation would handle provider-specific context
-	cfg := git.NewConfig(rootPath)
-	aiTool := cfg.GetAITool()
-
-	if aiTool == aiToolSkip {
-		return nil
-	}
-
-	// Start AI session with issue context
-	fmt.Printf("Starting AI session for %s...\n", issue.Title)
-	return nil
 }
 
 // RunCreate creates a new issue using any configured provider.
@@ -893,7 +941,7 @@ func RunCreate() error {
 
 	fmt.Printf("\n✓ Worktree created at: %s\n", worktreePath)
 
-	// Create tmux session with metadata and auto-install
+	// Create tmux session with AI tool
 	sessionMgr := session.NewManager()
 	if !sessionMgr.IsAvailable() {
 		if err := handleMissingTmux(); err != nil {
@@ -916,21 +964,21 @@ func RunCreate() error {
 		fmt.Println("\nSetting up tmux session...")
 		config := git.NewConfig(repo.RootPath)
 
-		// Get configured shell or use user's default shell
-		configuredShell := config.GetWithDefault(git.ConfigTmuxShell, "", git.ConfigScopeAuto)
-		shellCommand := session.GetShellCommand(configuredShell)
+		// Build issue context for AI tool
+		issueContext := buildIssueContext(issue, provider.Name())
 
-		err := createSessionWithMetadata(sessionMgr, config, sessionName, branchName, worktreePath, shellCommand)
+		// Resolve AI command with issue context
+		aiCommand, err := resolveAICommand(config, issueContext, false, worktreePath)
+		if err != nil {
+			fmt.Printf("⚠ Warning: %v\n", err)
+			// Continue without AI
+		}
+
+		err = createSessionWithAICommand(sessionMgr, config, sessionName, branchName, worktreePath, aiCommand)
 		if err != nil {
 			return fmt.Errorf("failed to create tmux session: %w", err)
 		}
 		fmt.Printf("✓ Tmux session created: %s\n", sessionName)
-
-		// Start AI tool if configured
-		if err := startAIInSession(sessionMgr, config, sessionName); err != nil {
-			fmt.Printf("⚠ Note: %v\n", err)
-			// Non-fatal - continue with session
-		}
 	}
 
 	fmt.Printf("\nTo start working, attach to the session:\n")
@@ -1094,7 +1142,64 @@ func RunPR(prID string) error {
 	fmt.Printf("\nPR #%d: %s\n", pr.Number, pr.Title)
 	fmt.Printf("URL: %s\n", pr.URL)
 
+	// 16. Create tmux session with AI tool for PR review
+	sessionMgr := session.NewManager()
+	if !sessionMgr.IsAvailable() {
+		if err := handleMissingTmux(); err != nil {
+			return err
+		}
+		// Retry after installation
+		sessionMgr = session.NewManager()
+		if !sessionMgr.IsAvailable() {
+			return fmt.Errorf("tmux is still not available after installation attempt")
+		}
+	}
+
+	sessionName := session.GenerateSessionName(branchName)
+	exists, err := sessionMgr.HasSession(sessionName)
+	if err != nil {
+		return fmt.Errorf("failed to check session existence: %w", err)
+	}
+
+	if !exists {
+		fmt.Println("\nSetting up tmux session...")
+		config := git.NewConfig(repo.RootPath)
+
+		// Build PR context for AI tool
+		prContext := buildPRContextFromGitHub(pr)
+
+		// Resolve AI command with PR context
+		aiCommand, err := resolveAICommand(config, prContext, false, worktreePath)
+		if err != nil {
+			fmt.Printf("⚠ Warning: %v\n", err)
+			// Continue without AI
+		}
+
+		err = createSessionWithAICommand(sessionMgr, config, sessionName, branchName, worktreePath, aiCommand)
+		if err != nil {
+			return fmt.Errorf("failed to create tmux session: %w", err)
+		}
+		fmt.Printf("✓ Tmux session created: %s\n", sessionName)
+	}
+
+	fmt.Printf("\nTo start working, attach to the session:\n")
+	fmt.Printf("  tmux attach-session -t %s\n", sessionName)
+	fmt.Printf("\nOr use auto-worktree resume to attach\n")
+
 	return nil
+}
+
+// buildPRContextFromGitHub creates a context prompt for an AI tool from GitHub PR details.
+func buildPRContextFromGitHub(pr *github.PullRequest) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("I'm reviewing GitHub pull request #%d.\n", pr.Number))
+	sb.WriteString(fmt.Sprintf("Title: %s\n", pr.Title))
+	sb.WriteString(fmt.Sprintf("Branch: %s -> %s\n", pr.HeadRefName, pr.BaseRefName))
+	if pr.Body != "" {
+		sb.WriteString(fmt.Sprintf("\n%s\n", pr.Body))
+	}
+	sb.WriteString("\nPlease review this pull request.")
+	return sb.String()
 }
 
 // RunStartupCleanup performs automatic cleanup of orphaned and merged worktrees at startup
@@ -2074,108 +2179,6 @@ func generateUUID() string {
 	return uuid.New().String()
 }
 
-// createSessionWithMetadata creates a tmux session and saves metadata
-func createSessionWithMetadata(sessionMgr session.Manager, config *git.Config, sessionName, branchName, worktreePath string, command []string) error {
-	// Create the actual tmux session
-	if err := sessionMgr.CreateSession(sessionName, worktreePath, command); err != nil {
-		return fmt.Errorf("failed to create session: %w", err)
-	}
-
-	// Create session metadata
-	now := time.Now()
-	metadata := &session.Metadata{
-		SessionName:    sessionName,
-		SessionID:      generateUUID(),
-		SessionType:    string(sessionMgr.SessionType()),
-		WorktreePath:   worktreePath,
-		BranchName:     branchName,
-		CreatedAt:      now,
-		LastAccessedAt: now,
-		Status:         session.StatusRunning,
-		WindowCount:    1,
-		PaneCount:      1,
-		Dependencies: session.DependenciesInfo{
-			Installed: false,
-		},
-	}
-
-	// Save metadata
-	if err := sessionMgr.SaveSessionMetadata(metadata); err != nil {
-		fmt.Printf("⚠ Warning: Failed to save session metadata: %v\n", err)
-		// Don't fail the session creation if metadata save fails
-	}
-
-	// Auto-install dependencies if configured
-	if autoInstall, err := config.GetBool(git.ConfigAutoInstall, git.ConfigScopeAuto); err == nil && autoInstall {
-		fmt.Println("Installing dependencies...")
-		progressFn := func(msg string) {
-			fmt.Printf("  %s\n", msg)
-		}
-
-		if err := session.InstallDependencies(metadata, progressFn); err != nil {
-			fmt.Printf("⚠ Warning: Failed to install dependencies: %v\n", err)
-		} else {
-			// Re-save metadata with updated dependency info
-			if err := sessionMgr.SaveSessionMetadata(metadata); err != nil {
-				fmt.Printf("⚠ Warning: Failed to save updated metadata: %v\n", err)
-			}
-		}
-	}
-
-	return nil
-}
-
-// startAIInSession starts the configured AI tool in the tmux session.
-// If multiple AI tools are available and none is configured, prompts the user to select one.
-// Returns nil if AI tools are disabled or none are available.
-func startAIInSession(_ session.Manager, config *git.Config, sessionName string) error {
-	resolver := ai.NewResolver(config)
-
-	// Check if AI is explicitly disabled
-	if config.GetAITool() == aiToolSkip {
-		return nil // AI disabled, nothing to do
-	}
-
-	// List available AI tools
-	availableTools := resolver.ListAvailable()
-	if len(availableTools) == 0 {
-		return nil // No AI tools installed, nothing to do
-	}
-
-	// Try to resolve the configured/preferred AI tool
-	tool, err := resolver.Resolve()
-	if err != nil {
-		// No tool configured but multiple are available - prompt user to select
-		if len(availableTools) > 1 {
-			selectedTool, err := selectAIToolInteractive(availableTools)
-			if err != nil {
-				return fmt.Errorf("failed to select AI tool: %w", err)
-			}
-			if selectedTool == nil {
-				return nil // User chose to skip
-			}
-			tool = selectedTool
-
-			// Save user's choice for future sessions
-			if err := saveAIToolChoice(config, tool.Name); err != nil {
-				fmt.Printf("⚠ Warning: Failed to save AI tool preference: %v\n", err)
-			}
-		} else if len(availableTools) == 1 {
-			tool = &availableTools[0]
-		} else {
-			return nil // No tools available
-		}
-	}
-
-	// Send the AI command to the tmux session
-	fmt.Printf("Starting %s...\n", tool.Name)
-	if err := sendCommandToSession(sessionName, tool.Command); err != nil {
-		return fmt.Errorf("failed to start %s: %w", tool.Name, err)
-	}
-
-	return nil
-}
-
 // selectAIToolInteractive prompts the user to select an AI tool from the available options
 func selectAIToolInteractive(tools []ai.Tool) (*ai.Tool, error) {
 	items := make([]ui.MenuItem, len(tools)+1)
@@ -2232,22 +2235,158 @@ func saveAIToolChoice(config *git.Config, toolName string) error {
 	return config.SetValidated(git.ConfigAITool, configValue, git.ConfigScopeLocal)
 }
 
-// sendCommandToSession sends a command to an existing tmux session
-func sendCommandToSession(sessionName string, command []string) error {
-	// Build the command string to send
-	cmdStr := strings.Join(command, " ")
+// buildIssueContext creates a context prompt for an AI tool from issue details.
+func buildIssueContext(issue *providers.Issue, providerName string) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("I'm working on %s issue %s.\n", providerName, issue.ID))
+	sb.WriteString(fmt.Sprintf("Title: %s\n", issue.Title))
+	if issue.Body != "" {
+		sb.WriteString(fmt.Sprintf("\n%s\n", issue.Body))
+	}
+	sb.WriteString("\nPlease review the issue and start implementing it.")
+	return sb.String()
+}
 
-	// Use tmux send-keys to send the command to the session
-	args := []string{
-		"send-keys",
-		"-t", sessionName,
-		cmdStr,
-		"Enter",
+// resolveAICommand determines the AI tool to use and returns the command.
+// It handles user selection if multiple tools are available.
+// Returns nil if AI is disabled or no tools are available.
+func resolveAICommand(config *git.Config, context string, isResume bool, worktreePath string) ([]string, error) {
+	resolver := ai.NewResolver(config)
+
+	// Check if AI is explicitly disabled
+	if config.GetAITool() == aiToolSkip {
+		return nil, nil // AI disabled, nothing to do
 	}
 
-	cmd := exec.CommandContext(context.Background(), "tmux", args...)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to send command to session: %w", err)
+	// List available AI tools
+	availableTools := resolver.ListAvailable()
+	if len(availableTools) == 0 {
+		// No AI tools installed - show installation instructions
+		showAIInstallInstructions()
+
+		return nil, nil
+	}
+
+	// Try to resolve the configured/preferred AI tool
+	tool, err := resolver.Resolve()
+	if err != nil {
+		// No tool configured but multiple are available - prompt user to select
+		if len(availableTools) > 1 {
+			selectedTool, selErr := selectAIToolInteractive(availableTools)
+			if selErr != nil {
+				return nil, fmt.Errorf("failed to select AI tool: %w", selErr)
+			}
+
+			if selectedTool == nil {
+				return nil, nil // User chose to skip
+			}
+
+			tool = selectedTool
+
+			// Save user's choice for future sessions
+			if saveErr := saveAIToolChoice(config, tool.Name); saveErr != nil {
+				fmt.Printf("⚠ Warning: Failed to save AI tool preference: %v\n", saveErr)
+			}
+		} else if len(availableTools) == 1 {
+			tool = &availableTools[0]
+		} else {
+			return nil, nil // No tools available
+		}
+	}
+
+	// Determine which command to use (resume vs fresh)
+	var cmd []string
+	if isResume && ai.HasExistingSession(worktreePath) {
+		cmd = tool.ResumeCommandWithContext(context)
+		fmt.Printf("Resuming %s session...\n", tool.Name)
+	} else {
+		cmd = tool.CommandWithContext(context)
+		fmt.Printf("Starting %s...\n", tool.Name)
+	}
+
+	return cmd, nil
+}
+
+// showAIInstallInstructions displays installation instructions for AI tools
+func showAIInstallInstructions() {
+	fmt.Println("\nNo AI coding assistant found.")
+	fmt.Println("Install one of the following to enable AI assistance:")
+
+	instructions := ai.GetInstallInstructions()
+	for _, inst := range instructions {
+		fmt.Printf("%s:\n", inst.Name)
+		for _, method := range inst.Methods {
+			fmt.Printf("  %s\n", method)
+		}
+		fmt.Printf("  More info: %s\n\n", inst.InfoURL)
+	}
+}
+
+// createSessionWithAICommand creates a tmux session with the AI command as the session command.
+// When the AI tool exits, the session will terminate.
+// If aiCommand is nil, creates a session with a shell instead.
+func createSessionWithAICommand(
+	sessionMgr session.Manager,
+	config *git.Config,
+	sessionName, branchName, worktreePath string,
+	aiCommand []string,
+) error {
+	// Determine the command to run in the session
+	var command []string
+	if len(aiCommand) > 0 {
+		command = aiCommand
+	} else {
+		// Fall back to shell if no AI command
+		configuredShell := config.GetWithDefault(git.ConfigTmuxShell, "", git.ConfigScopeAuto)
+		command = session.GetShellCommand(configuredShell)
+	}
+
+	// Create the actual tmux session
+	if err := sessionMgr.CreateSession(sessionName, worktreePath, command); err != nil {
+		return fmt.Errorf("failed to create session: %w", err)
+	}
+
+	// Create session metadata
+	now := time.Now()
+	metadata := &session.Metadata{
+		SessionName:    sessionName,
+		SessionID:      generateUUID(),
+		SessionType:    string(sessionMgr.SessionType()),
+		WorktreePath:   worktreePath,
+		BranchName:     branchName,
+		CreatedAt:      now,
+		LastAccessedAt: now,
+		Status:         session.StatusRunning,
+		WindowCount:    1,
+		PaneCount:      1,
+		Dependencies: session.DependenciesInfo{
+			Installed: false,
+		},
+	}
+
+	// Save metadata
+	if err := sessionMgr.SaveSessionMetadata(metadata); err != nil {
+		fmt.Printf("⚠ Warning: Failed to save session metadata: %v\n", err)
+		// Don't fail the session creation if metadata save fails
+	}
+
+	// Auto-install dependencies if configured (run before AI starts if using shell)
+	if len(aiCommand) == 0 {
+		if autoInstall, err := config.GetBool(git.ConfigAutoInstall, git.ConfigScopeAuto); err == nil && autoInstall {
+			fmt.Println("Installing dependencies...")
+			progressFn := func(msg string) {
+				fmt.Printf("  %s\n", msg)
+			}
+
+			if err := session.InstallDependencies(metadata, progressFn); err != nil {
+				fmt.Printf("⚠ Warning: Failed to install dependencies: %v\n", err)
+			} else {
+				// Re-save metadata with updated dependency info
+				if err := sessionMgr.SaveSessionMetadata(metadata); err != nil {
+					fmt.Printf("⚠ Warning: Failed to save updated metadata: %v\n", err)
+				}
+			}
+		}
 	}
 
 	return nil
