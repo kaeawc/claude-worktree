@@ -49,12 +49,14 @@ func GetProviderForRepository(repo *git.Repository) (providers.Provider, error) 
 // newGitHubProvider creates a GitHub provider
 func newGitHubProvider(repo *git.Repository) (providers.Provider, error) {
 	executor := github.NewGitHubExecutor()
+	installInfo := GitHubInstallInfo()
+
 	if !github.IsInstalled(executor) {
-		return nil, errors.New("gh CLI is not installed. Install with: brew install gh")
+		return nil, errors.New(installInfo.FormatNotInstalledError())
 	}
 
 	if err := github.IsAuthenticated(executor); err != nil {
-		return nil, errors.New("gh CLI is not authenticated. Run: gh auth login")
+		return nil, errors.New(installInfo.FormatNotAuthenticatedError())
 	}
 
 	client, err := github.NewClient(repo.RootPath)
@@ -67,12 +69,14 @@ func newGitHubProvider(repo *git.Repository) (providers.Provider, error) {
 
 // handleGitHubClientError converts GitHub client errors to user-friendly messages
 func handleGitHubClientError(err error) error {
+	installInfo := GitHubInstallInfo()
+
 	if errors.Is(err, github.ErrGHNotInstalled) {
-		return errors.New("gh CLI is not installed. Install with: brew install gh")
+		return errors.New(installInfo.FormatNotInstalledError())
 	}
 
 	if errors.Is(err, github.ErrGHNotAuthenticated) {
-		return errors.New("gh CLI is not authenticated. Run: gh auth login")
+		return errors.New(installInfo.FormatNotAuthenticatedError())
 	}
 
 	return fmt.Errorf("failed to initialize GitHub client: %w", err)
@@ -201,12 +205,14 @@ func (g *githubProviderShim) ProviderType() string {
 // newGitLabProvider creates a GitLab provider
 func newGitLabProvider(repo *git.Repository) (providers.Provider, error) {
 	executor := gitlab.NewGitLabExecutor()
+	installInfo := GitLabInstallInfo()
+
 	if !gitlab.IsInstalled(executor) {
-		return nil, errors.New("glab CLI is not installed. Install with: brew install glab")
+		return nil, errors.New(installInfo.FormatNotInstalledError())
 	}
 
 	if err := gitlab.IsAuthenticated(executor); err != nil {
-		return nil, errors.New("glab CLI is not authenticated. Run: glab auth login")
+		return nil, errors.New(installInfo.FormatNotAuthenticatedError())
 	}
 
 	client, err := gitlab.NewClient(repo.RootPath)
@@ -219,12 +225,14 @@ func newGitLabProvider(repo *git.Repository) (providers.Provider, error) {
 
 // handleGitLabClientError converts GitLab client errors to user-friendly messages
 func handleGitLabClientError(err error) error {
+	installInfo := GitLabInstallInfo()
+
 	if errors.Is(err, gitlab.ErrGlabNotInstalled) {
-		return errors.New("glab CLI is not installed. Install with: brew install glab")
+		return errors.New(installInfo.FormatNotInstalledError())
 	}
 
 	if errors.Is(err, gitlab.ErrGlabNotAuthenticated) {
-		return errors.New("glab CLI is not authenticated. Run: glab auth login")
+		return errors.New(installInfo.FormatNotAuthenticatedError())
 	}
 
 	return fmt.Errorf("failed to initialize GitLab client: %w", err)
@@ -338,15 +346,14 @@ func (g *gitlabProviderShim) ProviderType() string {
 
 // newJIRAProvider creates a JIRA provider
 func newJIRAProvider() (providers.Provider, error) {
+	installInfo := JIRAInstallInfo()
+
 	if !jira.IsInstalled() {
-		return nil, fmt.Errorf("jira CLI is not installed. Install with:\n" +
-			"  brew install ankitpokhrel/jira-cli/jira-cli\n" +
-			"  or see https://github.com/ankitpokhrel/jira-cli#installation\n" +
-			"After installation, run: jira init")
+		return nil, errors.New(installInfo.FormatNotInstalledError())
 	}
 
 	if err := jira.IsConfigured(); err != nil {
-		return nil, fmt.Errorf("jira CLI is not configured. Run: jira init")
+		return nil, errors.New(installInfo.FormatNotAuthenticatedError())
 	}
 
 	// Get repository for configuration
@@ -401,12 +408,14 @@ func autoDetectProvider(repo *git.Repository) (providers.Provider, error) {
 // newLinearProvider creates a Linear provider
 func newLinearProvider(repo *git.Repository) (providers.Provider, error) {
 	executor := linear.NewExecutor()
+	installInfo := LinearInstallInfo()
+
 	if !linear.IsInstalled(executor) {
-		return nil, errors.New("linear CLI is not installed. Install with: brew install linear\nAfter installation, run: linear auth")
+		return nil, errors.New(installInfo.FormatNotInstalledError())
 	}
 
 	if err := linear.IsAuthenticated(executor); err != nil {
-		return nil, errors.New("linear CLI is not authenticated. Run: linear auth")
+		return nil, errors.New(installInfo.FormatNotAuthenticatedError())
 	}
 
 	cfg := git.NewConfig(repo.RootPath)
@@ -421,12 +430,14 @@ func newLinearProvider(repo *git.Repository) (providers.Provider, error) {
 
 // handleLinearClientError converts Linear client errors to user-friendly messages
 func handleLinearClientError(err error) error {
+	installInfo := LinearInstallInfo()
+
 	if errors.Is(err, linear.ErrLinearNotInstalled) {
-		return errors.New("linear CLI is not installed. Install with: brew install linear")
+		return errors.New(installInfo.FormatNotInstalledError())
 	}
 
 	if errors.Is(err, linear.ErrLinearNotAuthenticated) {
-		return errors.New("linear CLI is not authenticated. Run: linear auth")
+		return errors.New(installInfo.FormatNotAuthenticatedError())
 	}
 
 	if errors.Is(err, linear.ErrNoTeamConfigured) {
