@@ -986,6 +986,19 @@ func selectIssueInteractiveGeneric(ctx context.Context, provider providers.Provi
 		return nil, fmt.Errorf("no open issues found")
 	}
 
+	// Check if AI auto-select is enabled
+	repo, err := git.NewRepository()
+	if err == nil {
+		issueAutoselect, err := repo.Config.GetBool(git.ConfigIssueAutoselect, git.ConfigScopeAuto)
+		if err == nil && issueAutoselect {
+			fmt.Println("Using AI to prioritize issues...")
+			issues = aiSelectIssues(repo, issues, provider.ProviderType())
+			if len(issues) > 0 {
+				fmt.Printf("Showing top %d AI-prioritized issues\n", len(issues))
+			}
+		}
+	}
+
 	// Convert issues to filterable list items
 	items := make([]ui.FilterableListItem, len(issues))
 	issueMap := make(map[string]int) // Map ID to index for lookup after selection
@@ -2699,15 +2712,14 @@ func selectPRInteractive(client *github.Client, repo *git.Repository) (int, erro
 	// Check if PR auto-selection is enabled
 	prAutoselect, err := repo.Config.GetBool(git.ConfigPRAutoselect, git.ConfigScopeAuto)
 	if err == nil && prAutoselect {
-		// Apply AI-powered priority sorting
+		// Apply AI-powered selection
+		fmt.Println("Using AI to prioritize pull requests...")
 		currentUser := getCurrentGitHubUser()
-		prs = sortPRsByPriority(prs, currentUser)
+		prs = aiSelectPRs(repo, prs, currentUser)
 
-		// Limit to top 5 for auto-selection
-		if len(prs) > 5 {
-			prs = prs[:5]
+		if len(prs) > 0 {
+			fmt.Printf("Showing top %d AI-prioritized PRs\n", len(prs))
 		}
-		fmt.Printf("Showing top %d prioritized PRs\n", len(prs))
 	}
 
 	// Convert to filterable list items
@@ -2789,80 +2801,242 @@ func getCurrentGitHubUser() string {
 	return strings.TrimSpace(string(output))
 }
 
-// sortPRsByPriority sorts PRs by priority:
-// 1. Review requested from current user
-// 2. Age (oldest first)
-// 3. Size (smaller first)
-// 4. CI status (passing first)
-func sortPRsByPriority(prs []github.PullRequest, currentUser string) []github.PullRequest {
-	// Create a copy to avoid modifying the original
-	sorted := make([]github.PullRequest, len(prs))
-	copy(sorted, prs)
-
-	// Sort using multiple criteria
-	// Note: In Go, we need to implement a custom sort with comparison function
-	// For simplicity, we'll use a scoring system
-
-	type prScore struct {
-		pr    github.PullRequest
-		score int
+// aiSelectIssues uses AI to select and prioritize issues.
+// Returns a filtered and reordered list of issues, or the original list if AI selection fails.
+func aiSelectIssues(repo *git.Repository, issues []providers.Issue, providerType string) []providers.Issue {
+	// Resolve AI tool
+	resolver := ai.NewResolver(repo.Config)
+	tool, err := resolver.Resolve()
+	if err != nil {
+		// AI tool not available or disabled, return original list
+		return issues
 	}
 
-	scores := make([]prScore, len(sorted))
-	for i, pr := range sorted {
-		score := 0
+	// Build the prompt with issue data
+	prompt := buildIssueSelectionPrompt(issues, providerType, repo)
 
-		// Priority 1: Review requested from current user (highest priority)
-		if currentUser != "" && pr.IsRequestedReviewer(currentUser) {
-			score += 1000
+	// Execute AI prompt
+	output, err := tool.ExecutePrompt(prompt)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: AI selection failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Falling back to showing all issues\n")
+
+		// Disable auto-select on failure
+		if setErr := repo.Config.SetBool(git.ConfigIssueAutoselect, false, git.ConfigScopeLocal); setErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to disable auto-select: %v\n", setErr)
+		} else {
+			fmt.Fprintf(os.Stderr, "AI auto-select has been disabled. Re-enable in settings if needed.\n")
 		}
 
-		// Priority 2: Age (older = higher score, max 100 points)
-		// We don't have creation date in the struct, so we'll use the PR number as a proxy
-		// Lower PR numbers = older PRs
-		ageScore := 100 - (pr.Number % 100)
-		score += ageScore
-
-		// Priority 3: Size (smaller = higher score, max 50 points)
-		totalChanges := pr.Additions + pr.Deletions
-		var sizeScore int
-		switch {
-		case totalChanges < 50:
-			sizeScore = 50
-		case totalChanges < 200:
-			sizeScore = 40
-		case totalChanges < 500:
-			sizeScore = 30
-		case totalChanges < 1000:
-			sizeScore = 20
-		default:
-			sizeScore = 10
-		}
-		score += sizeScore
-
-		// Priority 4: CI status (passing = higher score, 25 points)
-		if pr.AllChecksPass() {
-			score += 25
-		}
-
-		scores[i] = prScore{pr: pr, score: score}
+		return issues
 	}
 
-	// Sort by score (descending)
-	for i := 0; i < len(scores); i++ {
-		for j := i + 1; j < len(scores); j++ {
-			if scores[j].score > scores[i].score {
-				scores[i], scores[j] = scores[j], scores[i]
+	// Parse IDs from AI output based on provider type
+	var selectedIDs []string
+	if providerType == "linear" {
+		selectedIDs = ai.ParseLinearIDs(output, 5)
+	} else {
+		selectedIDs = ai.ParseNumericIDs(output, 5)
+	}
+
+	if len(selectedIDs) == 0 {
+		fmt.Fprintf(os.Stderr, "Warning: AI returned no valid issue IDs\n")
+		return issues
+	}
+
+	// Reorder issues based on AI selection
+	selected := make([]providers.Issue, 0, len(selectedIDs))
+	for _, id := range selectedIDs {
+		for _, issue := range issues {
+			if issue.ID == id {
+				selected = append(selected, issue)
+				break
 			}
 		}
 	}
 
-	// Extract sorted PRs
-	for i, ps := range scores {
-		sorted[i] = ps.pr
+	if len(selected) == 0 {
+		// No matches found, return original list
+		return issues
 	}
 
-	return sorted
+	return selected
+}
+
+// buildIssueSelectionPrompt creates a prompt for AI to select issues.
+func buildIssueSelectionPrompt(issues []providers.Issue, providerType string, repo *git.Repository) string {
+	var sb strings.Builder
+
+	sb.WriteString("Analyze the following issues and select the top 5 issues that would be best to work on next. Consider:\n")
+	sb.WriteString("- Priority labels (high priority, urgent, etc.)\n")
+	sb.WriteString("- Issue type (bug fixes are often higher priority than features)\n")
+	sb.WriteString("- Labels like 'good first issue' or 'help wanted'\n")
+	sb.WriteString("- Issue complexity and impact\n\n")
+
+	// Add repository context if available
+	repoPath := repo.RootPath
+	if repoPath != "" {
+		sb.WriteString(fmt.Sprintf("Repository: %s\n\n", repoPath))
+	}
+
+	if providerType == "linear" {
+		sb.WriteString("Return ONLY the top 5 issue IDs in priority order (one per line), formatted as issue IDs (e.g., 'TEAM-42').\n\n")
+	} else {
+		sb.WriteString("Return ONLY the top 5 issue numbers in priority order (one per line), formatted as just the numbers (e.g., '42').\n\n")
+	}
+
+	sb.WriteString("Issues:\n")
+	for _, issue := range issues {
+		sb.WriteString(fmt.Sprintf("#%s | %s", issue.ID, issue.Title))
+		if len(issue.Labels) > 0 {
+			sb.WriteString(" [")
+			sb.WriteString(strings.Join(issue.Labels, ", "))
+			sb.WriteString("]")
+		}
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("\nReturn only the issue IDs/numbers, one per line, nothing else.")
+
+	return sb.String()
+}
+
+// aiSelectPRs uses AI to select and prioritize pull requests.
+// Returns a filtered and reordered list of PRs, or the original list if AI selection fails.
+func aiSelectPRs(repo *git.Repository, prs []github.PullRequest, currentUser string) []github.PullRequest {
+	// Resolve AI tool
+	resolver := ai.NewResolver(repo.Config)
+	tool, err := resolver.Resolve()
+	if err != nil {
+		// AI tool not available or disabled, return original list
+		return prs
+	}
+
+	// Build the prompt with PR data
+	prompt := buildPRSelectionPrompt(prs, currentUser, repo)
+
+	// Execute AI prompt
+	output, err := tool.ExecutePrompt(prompt)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: AI selection failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Falling back to showing all PRs\n")
+
+		// Disable auto-select on failure
+		if setErr := repo.Config.SetBool(git.ConfigPRAutoselect, false, git.ConfigScopeLocal); setErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to disable auto-select: %v\n", setErr)
+		} else {
+			fmt.Fprintf(os.Stderr, "AI auto-select has been disabled. Re-enable in settings if needed.\n")
+		}
+
+		return prs
+	}
+
+	// Parse PR numbers from AI output
+	selectedNumbers := ai.ParseNumericIDs(output, 5)
+
+	if len(selectedNumbers) == 0 {
+		fmt.Fprintf(os.Stderr, "Warning: AI returned no valid PR numbers\n")
+		return prs
+	}
+
+	// Reorder PRs based on AI selection
+	selected := make([]github.PullRequest, 0, len(selectedNumbers))
+	for _, numStr := range selectedNumbers {
+		for _, pr := range prs {
+			if fmt.Sprintf("%d", pr.Number) == numStr {
+				selected = append(selected, pr)
+				break
+			}
+		}
+	}
+
+	if len(selected) == 0 {
+		// No matches found, return original list
+		return prs
+	}
+
+	return selected
+}
+
+// buildPRSelectionPrompt creates a prompt for AI to select PRs.
+func buildPRSelectionPrompt(prs []github.PullRequest, currentUser string, repo *git.Repository) string {
+	var sb strings.Builder
+
+	sb.WriteString("Analyze the following GitHub Pull Requests and select the top 5 PRs that would be best to review next. ")
+	sb.WriteString("Consider the following criteria in priority order:\n\n")
+	sb.WriteString(fmt.Sprintf("1. PRs where the current user (%s) was requested as a reviewer (highest priority)\n", currentUser))
+	sb.WriteString("2. PRs with no reviews yet (need attention)\n")
+	sb.WriteString("3. Smaller PRs with fewer changes (easier to review, faster feedback)\n")
+	sb.WriteString("4. PRs with 100% passing checks (✓ status) - prefer these over failing (✗) or pending (○)\n")
+	sb.WriteString("5. Author reputation: prefer maintainers/core contributors over occasional contributors\n\n")
+
+	// Add repository context if available
+	repoPath := repo.RootPath
+	if repoPath != "" {
+		sb.WriteString(fmt.Sprintf("Repository: %s\n", repoPath))
+	}
+	sb.WriteString(fmt.Sprintf("Current user: %s\n\n", currentUser))
+
+	sb.WriteString("Return ONLY the top 5 PR numbers in priority order (one per line), formatted as just the numbers (e.g., '42').\n\n")
+
+	sb.WriteString("Pull Requests:\n")
+	for _, pr := range prs {
+		// Format: #123 | Title [labels] | +50/-20 | ✓✗○
+		sb.WriteString(fmt.Sprintf("#%d | %s", pr.Number, pr.Title))
+
+		if len(pr.Labels) > 0 {
+			labels := make([]string, len(pr.Labels))
+			for i, label := range pr.Labels {
+				labels[i] = label.Name
+			}
+			sb.WriteString(" [")
+			sb.WriteString(strings.Join(labels, ", "))
+			sb.WriteString("]")
+		}
+
+		sb.WriteString(fmt.Sprintf(" | +%d/-%d", pr.Additions, pr.Deletions))
+
+		// Add review request info
+		if len(pr.ReviewRequests) > 0 {
+			reviewers := make([]string, len(pr.ReviewRequests))
+			for i, req := range pr.ReviewRequests {
+				reviewers[i] = req.Login
+			}
+			sb.WriteString(" | Reviewers: ")
+			sb.WriteString(strings.Join(reviewers, ", "))
+		}
+
+		// Add CI status
+		if len(pr.StatusCheckRollup) > 0 {
+			sb.WriteString(" | CI: ")
+			passing := 0
+			failing := 0
+			pending := 0
+			for _, check := range pr.StatusCheckRollup {
+				switch check.Status {
+				case "SUCCESS", "COMPLETED":
+					passing++
+				case "FAILURE", "ERROR":
+					failing++
+				default:
+					pending++
+				}
+			}
+			sb.WriteString(fmt.Sprintf("✓%d", passing))
+			if failing > 0 {
+				sb.WriteString(fmt.Sprintf(" ✗%d", failing))
+			}
+			if pending > 0 {
+				sb.WriteString(fmt.Sprintf(" ○%d", pending))
+			}
+		}
+
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("\nReturn only the 5 PR numbers, one per line, nothing else.")
+
+	return sb.String()
 }
 
 // shouldGenerateAIReview checks if AI review should be generated

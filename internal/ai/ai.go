@@ -3,6 +3,7 @@ package ai
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,14 @@ import (
 	"strings"
 
 	"github.com/kaeawc/auto-worktree/internal/git"
+)
+
+// AI tool config keys
+const (
+	toolClaude = "claude"
+	toolCodex  = "codex"
+	toolGemini = "gemini"
+	toolJules  = "jules"
 )
 
 // Tool represents an AI coding assistant tool
@@ -74,40 +83,40 @@ func (r *Resolver) Resolve() (*Tool, error) {
 // getTool returns a Tool if the specified tool is available
 func (r *Resolver) getTool(name string) *Tool {
 	switch name {
-	case "claude":
-		if commandExists("claude") {
+	case toolClaude:
+		if commandExists(toolClaude) {
 			return &Tool{
 				Name:          "Claude Code",
-				ConfigKey:     "claude",
-				Command:       []string{"claude", "--dangerously-skip-permissions"},
-				ResumeCommand: []string{"claude", "--dangerously-skip-permissions", "--continue"},
+				ConfigKey:     toolClaude,
+				Command:       []string{toolClaude, "--dangerously-skip-permissions"},
+				ResumeCommand: []string{toolClaude, "--dangerously-skip-permissions", "--continue"},
 			}
 		}
-	case "codex":
-		if commandExists("codex") {
+	case toolCodex:
+		if commandExists(toolCodex) {
 			return &Tool{
 				Name:          "Codex",
-				ConfigKey:     "codex",
-				Command:       []string{"codex", "--yolo"},
-				ResumeCommand: []string{"codex", "resume", "--last"},
+				ConfigKey:     toolCodex,
+				Command:       []string{toolCodex, "--yolo"},
+				ResumeCommand: []string{toolCodex, "resume", "--last"},
 			}
 		}
-	case "gemini":
-		if commandExists("gemini") {
+	case toolGemini:
+		if commandExists(toolGemini) {
 			return &Tool{
 				Name:          "Gemini CLI",
-				ConfigKey:     "gemini",
-				Command:       []string{"gemini", "--yolo"},
-				ResumeCommand: []string{"gemini", "--resume"},
+				ConfigKey:     toolGemini,
+				Command:       []string{toolGemini, "--yolo"},
+				ResumeCommand: []string{toolGemini, "--resume"},
 			}
 		}
-	case "jules":
-		if commandExists("jules") {
+	case toolJules:
+		if commandExists(toolJules) {
 			return &Tool{
 				Name:          "Google Jules CLI",
-				ConfigKey:     "jules",
-				Command:       []string{"jules"},
-				ResumeCommand: []string{"jules"}, // Jules has no special resume flag
+				ConfigKey:     toolJules,
+				Command:       []string{toolJules},
+				ResumeCommand: []string{toolJules}, // Jules has no special resume flag
 			}
 		}
 	}
@@ -119,7 +128,7 @@ func (r *Resolver) getTool(name string) *Tool {
 func (r *Resolver) ListAvailable() []Tool {
 	var tools []Tool
 
-	for _, name := range []string{"claude", "codex", "gemini", "jules"} {
+	for _, name := range []string{toolClaude, toolCodex, toolGemini, toolJules} {
 		if tool := r.getTool(name); tool != nil {
 			tools = append(tools, *tool)
 		}
@@ -299,6 +308,146 @@ func GetInstallInstructions() []InstallInstructions {
 			InfoURL: "https://jules.google/docs",
 		},
 	}
+}
+
+// ExecutePrompt executes a one-shot prompt with the AI tool and returns the output.
+// This is used for non-interactive tasks like auto-selecting issues/PRs.
+// Returns the raw output from the AI tool.
+func (t *Tool) ExecutePrompt(prompt string) (string, error) {
+	// Build tool-specific command for one-shot prompt execution
+	ctx := context.Background()
+	var cmd *exec.Cmd
+
+	switch t.ConfigKey {
+	case toolClaude:
+		// Claude uses --print flag for non-interactive output
+		cmd = exec.CommandContext(ctx, toolClaude, "--print")
+	case toolGemini:
+		// Gemini uses --yolo flag to auto-approve actions
+		cmd = exec.CommandContext(ctx, toolGemini, "--yolo")
+	case toolCodex:
+		// Codex needs testing - using similar pattern to gemini
+		cmd = exec.CommandContext(ctx, toolCodex, "--yolo")
+	case toolJules:
+		// Jules doesn't support stdin piping for one-shot prompts
+		return "", fmt.Errorf("jules does not support one-shot prompt execution")
+	default:
+		return "", fmt.Errorf("unsupported AI tool for prompt execution: %s", t.ConfigKey)
+	}
+
+	// Set up stdin with the prompt
+	cmd.Stdin = strings.NewReader(prompt)
+
+	// Capture both stdout and stderr
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	// Execute the command
+	err := cmd.Run()
+	if err != nil {
+		// Include stderr in error message for debugging
+		stderrStr := stderr.String()
+		if stderrStr != "" {
+			return "", fmt.Errorf("AI tool execution failed: %w\nstderr: %s", err, stderrStr)
+		}
+
+		return "", fmt.Errorf("AI tool execution failed: %w", err)
+	}
+
+	return stdout.String(), nil
+}
+
+// ParseNumericIDs extracts numeric IDs from AI output.
+// Used for GitHub issue/PR numbers (e.g., "42", "123").
+func ParseNumericIDs(output string, limit int) []string {
+	var ids []string
+	scanner := bufio.NewScanner(strings.NewReader(output))
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		// Match lines that contain only digits
+		if len(line) > 0 && isNumeric(line) {
+			ids = append(ids, line)
+			if len(ids) >= limit {
+				break
+			}
+		}
+	}
+
+	return ids
+}
+
+// ParseLinearIDs extracts Linear-style IDs from AI output.
+// Used for Linear issue IDs (e.g., "TEAM-42", "PROJ-123").
+func ParseLinearIDs(output string, limit int) []string {
+	var ids []string
+	scanner := bufio.NewScanner(strings.NewReader(output))
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		// Match lines with Linear ID format: UPPERCASE-NUMBER
+		if len(line) > 0 && isLinearID(line) {
+			ids = append(ids, line)
+			if len(ids) >= limit {
+				break
+			}
+		}
+	}
+
+	return ids
+}
+
+// isNumeric checks if a string contains only digits
+func isNumeric(s string) bool {
+	if s == "" {
+		return false
+	}
+
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+
+	return true
+}
+
+// isLinearID checks if a string matches Linear ID format (e.g., "TEAM-42")
+func isLinearID(s string) bool {
+	if len(s) < 3 {
+		return false
+	}
+
+	// Find the hyphen
+	hyphenIdx := strings.IndexByte(s, '-')
+	if hyphenIdx <= 0 || hyphenIdx >= len(s)-1 {
+		return false
+	}
+
+	// Check prefix is uppercase alphanumeric with at least one letter
+	prefix := s[:hyphenIdx]
+	hasLetter := false
+
+	for _, c := range prefix {
+		switch {
+		case c >= 'A' && c <= 'Z':
+			hasLetter = true
+		case c >= '0' && c <= '9':
+			continue
+		default:
+			return false
+		}
+	}
+
+	if !hasLetter {
+		return false
+	}
+
+	// Check suffix is numeric
+	suffix := s[hyphenIdx+1:]
+
+	return isNumeric(suffix)
 }
 
 // commandExists checks if a command is available in PATH
