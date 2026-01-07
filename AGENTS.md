@@ -2,6 +2,147 @@
 
 This document provides essential context for AI agents working on the auto-worktree project.
 
+## Safety: Coordinating Multiple AI Agents
+
+**WARNING**: While worktrees safely isolate branches, git itself is NOT designed for concurrent operations. Running multiple AI agents simultaneously in different worktrees can corrupt your repository.
+
+### Critical Safety Rules
+
+1. **Run Only ONE AI Agent Per Repository at a Time**
+   - Multiple agents = multiple concurrent git commands
+   - Concurrent git commands = repository corruption risk
+   - Even if agents are in different worktrees
+
+2. **Pause Other Agents Before Git Operations**
+   - Before rebasing, committing, or pushing in one worktree
+   - Stop or pause any AI agents in other worktrees
+   - Wait for the operation to complete
+
+3. **Disable Background Git Operations**
+   - IDE git status polling can interfere with agent operations
+   - Disable auto-fetch and auto-refresh in VS Code, IntelliJ, etc.
+   - See [docs/BEST_PRACTICES.md](docs/BEST_PRACTICES.md) for detailed instructions
+
+### Why This Matters
+
+Git worktrees share critical data:
+- `.git/objects/` - Object database (all commits)
+- `.git/refs/` - Branch references
+- `.git/config` - Repository configuration
+- Pack files and garbage collection
+
+When multiple agents run git commands simultaneously, they can corrupt this shared data.
+
+### Safe AI Agent Workflow
+
+```bash
+# Start first agent in worktree 1
+cd ~/worktrees/repo/feature-1
+auto-worktree issue 42
+# Claude Code session starts
+# Make changes, commit, push
+# EXIT agent when done
+
+# Only after first agent exits, start second agent
+cd ~/worktrees/repo/feature-2
+auto-worktree issue 43
+# New Claude Code session
+```
+
+### Unsafe AI Agent Workflow
+
+```bash
+# Starting multiple agents simultaneously - DANGEROUS!
+# Terminal 1:
+cd ~/worktrees/repo/feature-1
+claude --dangerously-skip-permissions &
+
+# Terminal 2 (DON'T DO THIS):
+cd ~/worktrees/repo/feature-2
+claude --dangerously-skip-permissions &
+
+# Both agents may run git commands simultaneously
+# Result: Potential repository corruption
+```
+
+### Using auto-worktree Session Management
+
+The `auto-worktree sessions` command helps coordinate agents:
+
+```bash
+# Check for active sessions before starting new agent
+auto-worktree sessions
+
+# Shows:
+# 🟢 Running: feature-1 (claude)
+# 💤 Idle: feature-2 (paused)
+
+# Only start new agent if no others are RUNNING
+# Paused or idle sessions are safe
+```
+
+### Tool-Specific Configuration
+
+#### Claude Code
+
+```bash
+# Claude Code can run background git status
+# Disable with flag or ensure only one instance runs
+claude --dangerously-skip-permissions  # Use cautiously
+
+# Check for running instances before starting
+ps aux | grep "claude"
+```
+
+#### VS Code + AI Extensions
+
+```json
+// settings.json
+{
+  "git.autorefresh": false,
+  "git.autofetch": false,
+  "git.enabled": true
+}
+```
+
+#### Cursor
+
+```bash
+# Cursor runs git commands via its AI agent
+# Ensure no other Cursor windows are open for same repo
+# Close other windows before starting new agent session
+```
+
+### Recovery from Corruption
+
+If you experience repository corruption:
+
+1. **Identify the problem:**
+   ```bash
+   git fsck --full
+   ```
+
+2. **Basic recovery:**
+   ```bash
+   git gc --prune=now
+   git fsck --full
+   ```
+
+3. **Advanced recovery:**
+   See [docs/BEST_PRACTICES.md - Recovery from Corruption](docs/BEST_PRACTICES.md#recovery-from-corruption)
+
+4. **Prevention:**
+   - Always follow the "one agent at a time" rule
+   - Use `auto-worktree sessions` to track active agents
+   - Disable background git operations in all tools
+
+### Related Documentation
+
+- [README.md - Safety Warning](README.md#safety-warning-concurrent-git-operations) - Quick overview
+- [docs/BEST_PRACTICES.md](docs/BEST_PRACTICES.md) - Comprehensive safety guide
+- [Issue #174](https://github.com/user/auto-worktree/issues/174) - Git corruption reports
+- [Issue #176](https://github.com/user/auto-worktree/issues/176) - This documentation effort
+
 ## Project Overview
 
 **auto-worktree** is a bash/zsh tool that enables safe, isolated workspaces for AI agent sessions using git worktrees. It provides an interactive TUI for creating worktrees, working on GitHub issues, reviewing PRs, and managing cleanup of merged/stale worktrees.

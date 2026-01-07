@@ -16,6 +16,55 @@ A bash tool for safely running AI agents in isolated git worktrees. Create separ
 - **AI Agent Support**: Integrates with Claude Code, Codex CLI, or Gemini CLI
 - **Tmux Session Management**: Persistent session tracking with pause/resume, status monitoring, and auto-dependency installation
 
+## Safety Warning: Concurrent Git Operations
+
+**IMPORTANT**: While git worktrees safely isolate branches and working directories, **git itself is not designed for concurrent operations**. Running multiple git commands simultaneously across different worktrees can cause repository corruption.
+
+### What's Safe vs. Unsafe
+
+**Safe - Worktrees prevent these problems:**
+- Multiple branches checked out at once (each in its own worktree)
+- Working on different features simultaneously in separate directories
+- Switching context without stashing or committing incomplete work
+
+**Unsafe - Concurrent git commands can corrupt your repository:**
+```bash
+# Running git operations in parallel across worktrees
+cd worktree1 && git commit -m "change" &
+cd worktree2 && git rebase main &
+cd worktree3 && git push &
+```
+
+### Why This Matters
+
+Git shares critical data across all worktrees:
+- `.git/objects/` - Object database
+- `.git/refs/` - References
+- `.git/config` - Configuration
+- `.git/hooks/` - Hooks
+- Pack files and garbage collection
+
+Running concurrent git commands can corrupt this shared data, even though each worktree has its own branch and working directory.
+
+### Safe Practices
+
+**Run git operations sequentially:**
+```bash
+cd worktree1 && git commit -m "change"
+cd worktree2 && git commit -m "change"
+cd worktree3 && git rebase main
+```
+
+**When using AI agents:**
+- Only run one agent at a time per repository
+- Pause or stop other agents before starting git operations
+- Disable background git status checks in your IDE/tools
+- See [AGENTS.md](AGENTS.md#safety-coordinating-multiple-ai-agents) for detailed guidance
+
+**For more information:**
+- [docs/BEST_PRACTICES.md](docs/BEST_PRACTICES.md) - Detailed safety guidelines and patterns
+- [AGENTS.md](AGENTS.md#safety-coordinating-multiple-ai-agents) - AI agent coordination strategies
+
 ## Installation
 
 ### Prerequisites

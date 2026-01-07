@@ -4827,6 +4827,20 @@ auto-worktree() {
       echo "Configuration:"
       echo "  First time using issues? Run 'auto-worktree issue' to configure"
       echo "  your issue provider (GitHub, GitLab, JIRA, or Linear) for this repository."
+      echo ""
+      gum style --foreground 3 --bold "⚠️  SAFETY WARNING"
+      echo ""
+      echo "Worktrees are safe, but git is NOT designed for concurrent operations."
+      echo "Running multiple git commands simultaneously (across different worktrees)"
+      echo "can corrupt your repository."
+      echo ""
+      echo "Safe practices:"
+      echo "  • Run only ONE AI agent per repository at a time"
+      echo "  • Complete git operations (commit, rebase, push) sequentially"
+      echo "  • Pause other agents before starting git operations"
+      echo "  • Disable background git status in IDEs"
+      echo ""
+      echo "See docs/BEST_PRACTICES.md for detailed safety guidance."
       ;;
     "")    _aw_menu ;;
     *)
