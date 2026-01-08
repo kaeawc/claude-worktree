@@ -27,7 +27,7 @@ func main() {
 
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
-		case "version", "--version", "-v", "help", "--help", "-h", "doctor":
+		case "version", "--version", "-v", "help", "--help", "-h", "doctor", "health-check", "health", "repair", "monitor": //nolint:goconst
 			needsCleanup = false
 		}
 	}
@@ -109,6 +109,9 @@ func runCommand(command string) error {
 	case "doctor":
 		return runDoctorCommand()
 
+	case "health-check", "health", "repair", "monitor": //nolint:goconst
+		return runHealthCommand(command)
+
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", command)
 		showHelp()
@@ -144,6 +147,19 @@ func runRemoveCommand() error {
 	}
 
 	return cmd.RunRemove(os.Args[2])
+}
+
+func runHealthCommand(command string) error {
+	switch command {
+	case "health-check", "health": //nolint:goconst
+		return cmd.RunHealthCheck()
+	case "repair":
+		return cmd.RunRepair()
+	case "monitor":
+		return cmd.RunMonitor()
+	default:
+		return fmt.Errorf("unknown health command: %s", command)
+	}
 }
 
 func runDoctorCommand() error {
@@ -254,12 +270,25 @@ COMMANDS:
     remove <path>         Remove a worktree
     prune                 Prune orphaned worktrees
     doctor                Run repository diagnostics
+    health-check          Check worktree health (use --all for all worktrees)
+    repair                Repair worktree issues (use --all for all worktrees)
+    monitor               Monitor worktree health continuously
     version               Show version information
     help                  Show this help message
 
 DOCTOR FLAGS:
     --check-locks         Check for stale Git lock files (default)
     --remove-locks        Remove stale lock files (use with --check-locks)
+
+HEALTH CHECK FLAGS:
+    --all, -a             Check all worktrees (default: current worktree)
+
+REPAIR FLAGS:
+    --all, -a             Repair all worktrees (default: current worktree)
+    --yes, -y             Skip confirmation for unsafe operations
+
+MONITOR FLAGS:
+    --interval, -i <sec>  Check interval in seconds (default: 60)
 
 EXAMPLES:
     # Show interactive menu
@@ -297,6 +326,21 @@ EXAMPLES:
 
     # Remove stale lock files
     auto-worktree doctor --check-locks --remove-locks
+
+    # Check health of current worktree
+    auto-worktree health-check
+
+    # Check health of all worktrees
+    auto-worktree health-check --all
+
+    # Repair issues in current worktree
+    auto-worktree repair
+
+    # Repair all worktrees without prompts
+    auto-worktree repair --all --yes
+
+    # Monitor all worktrees every 30 seconds
+    auto-worktree monitor --interval 30
 
 For more information, visit: https://github.com/kaeawc/auto-worktree
 `
