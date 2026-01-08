@@ -3437,3 +3437,300 @@ func RunSessions() error {
 
 	return nil
 }
+
+// RunHealthCheck performs a health check on worktrees
+func RunHealthCheck() error {
+	span := perf.StartSpan("health-check-command")
+	defer span()
+
+	repo, err := git.NewRepository()
+	if err != nil {
+		return fmt.Errorf("failed to initialize repository: %w", err)
+	}
+
+	// Parse flags
+	checkAll := false
+	for _, arg := range os.Args[2:] {
+		if arg == "--all" || arg == "-a" {
+			checkAll = true
+		}
+	}
+
+	var results []*git.HealthCheckResult
+
+	if checkAll {
+		// Check all worktrees
+		fmt.Println("🔍 Running health check on all worktrees...")
+		results, err = repo.PerformHealthCheckAll()
+		if err != nil {
+			return fmt.Errorf("health check failed: %w", err)
+		}
+	} else {
+		// Check current worktree
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get current directory: %w", err)
+		}
+
+		fmt.Printf("🔍 Running health check on current worktree: %s\n", cwd)
+		result, err := repo.PerformHealthCheck(cwd)
+		if err != nil {
+			return fmt.Errorf("health check failed: %w", err)
+		}
+		results = []*git.HealthCheckResult{result}
+	}
+
+	// Display results
+	fmt.Println()
+	displayHealthCheckResults(results)
+
+	return nil
+}
+
+// displayHealthCheckResults prints health check results in a readable format
+func displayHealthCheckResults(results []*git.HealthCheckResult) {
+	totalIssues := 0
+	healthyCount := 0
+	unhealthyCount := 0
+	repairableIssues := 0
+
+	for _, result := range results {
+		if result.Healthy {
+			healthyCount++
+		} else {
+			unhealthyCount++
+		}
+
+		totalIssues += len(result.Issues)
+
+		// Count repairable issues
+		for _, issue := range result.Issues {
+			if issue.Repairable {
+				repairableIssues++
+			}
+		}
+
+		// Display worktree header
+		fmt.Printf("\n📁 Worktree: %s\n", result.WorktreePath)
+
+		severity := result.GetMaxSeverity()
+		var statusIcon string
+		switch severity {
+		case git.SeverityOK:
+			statusIcon = "✅"
+		case git.SeverityWarning:
+			statusIcon = "⚠️"
+		case git.SeverityError:
+			statusIcon = "❌"
+		case git.SeverityCritical:
+			statusIcon = "🔴"
+		}
+
+		if result.Healthy {
+			fmt.Printf("   Status: %s Healthy\n", statusIcon)
+		} else {
+			fmt.Printf("   Status: %s Unhealthy (%s)\n", statusIcon, severity)
+		}
+
+		// Display issues
+		if len(result.Issues) > 0 {
+			fmt.Printf("   Issues found: %d\n", len(result.Issues))
+			for _, issue := range result.Issues {
+				var icon string
+				switch issue.Severity {
+				case git.SeverityOK:
+					icon = "ℹ️"
+				case git.SeverityWarning:
+					icon = "⚠️"
+				case git.SeverityError:
+					icon = "❌"
+				case git.SeverityCritical:
+					icon = "🔴"
+				}
+
+				fmt.Printf("   %s [%s] %s\n", icon, issue.Category, issue.Description)
+
+				if issue.Repairable && issue.RepairHint != "" {
+					fmt.Printf("      💡 %s\n", issue.RepairHint)
+				}
+			}
+		}
+	}
+
+	// Summary
+	fmt.Println("\n" + strings.Repeat("─", 60))
+	fmt.Printf("Summary:\n")
+	fmt.Printf("  Total worktrees checked: %d\n", len(results))
+	fmt.Printf("  Healthy: %d\n", healthyCount)
+	fmt.Printf("  Unhealthy: %d\n", unhealthyCount)
+	fmt.Printf("  Total issues: %d\n", totalIssues)
+	if repairableIssues > 0 {
+		fmt.Printf("  Repairable issues: %d\n", repairableIssues)
+		fmt.Println("\n💡 Run 'auto-worktree repair' to fix repairable issues automatically")
+	}
+}
+
+// RunRepair attempts to repair worktree issues
+func RunRepair() error {
+	span := perf.StartSpan("repair-command")
+	defer span()
+
+	repo, err := git.NewRepository()
+	if err != nil {
+		return fmt.Errorf("failed to initialize repository: %w", err)
+	}
+
+	// Parse flags
+	checkAll := false
+	autoYes := false
+	for _, arg := range os.Args[2:] {
+		if arg == "--all" || arg == "-a" {
+			checkAll = true
+		}
+		if arg == "--yes" || arg == "-y" {
+			autoYes = true
+		}
+	}
+
+	// First, run health check to find issues
+	var results []*git.HealthCheckResult
+
+	if checkAll {
+		fmt.Println("🔍 Analyzing all worktrees for repairable issues...")
+		results, err = repo.PerformHealthCheckAll()
+		if err != nil {
+			return fmt.Errorf("health check failed: %w", err)
+		}
+	} else {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get current directory: %w", err)
+		}
+
+		fmt.Printf("🔍 Analyzing current worktree for repairable issues: %s\n", cwd)
+		result, err := repo.PerformHealthCheck(cwd)
+		if err != nil {
+			return fmt.Errorf("health check failed: %w", err)
+		}
+		results = []*git.HealthCheckResult{result}
+	}
+
+	// Get repair actions
+	actions := repo.GetRepairActions(results)
+
+	if len(actions) == 0 {
+		fmt.Println("\n✅ No repairable issues found!")
+		return nil
+	}
+
+	// Separate safe and unsafe actions
+	safeActions := git.GetSafeRepairActions(actions)
+	unsafeActions := git.GetUnsafeRepairActions(actions)
+
+	fmt.Printf("\n🔧 Found %d repairable issue(s):\n", len(actions))
+	fmt.Printf("   Safe operations: %d\n", len(safeActions))
+	fmt.Printf("   Operations requiring confirmation: %d\n", len(unsafeActions))
+	fmt.Println()
+
+	// Display actions
+	for i, action := range actions {
+		safetyIcon := "✅"
+		if !action.Safe {
+			safetyIcon = "⚠️"
+		}
+		fmt.Printf("%d. %s %s\n", i+1, safetyIcon, action.Description)
+		fmt.Printf("   Type: %s\n", action.Type)
+		if action.WorktreePath != "" {
+			fmt.Printf("   Worktree: %s\n", action.WorktreePath)
+		}
+	}
+
+	// Perform safe repairs automatically
+	if len(safeActions) > 0 {
+		fmt.Printf("\n🔧 Performing %d safe repair(s)...\n", len(safeActions))
+		safeResults, err := repo.PerformRepairs(safeActions)
+		if err != nil {
+			fmt.Printf("❌ Error during safe repairs: %v\n", err)
+		}
+		displayRepairResults(safeResults)
+	}
+
+	// Handle unsafe repairs
+	if len(unsafeActions) > 0 {
+		if !autoYes {
+			fmt.Printf("\n⚠️  %d operation(s) require confirmation:\n", len(unsafeActions))
+			for _, action := range unsafeActions {
+				fmt.Printf("   - %s\n", action.Description)
+			}
+			fmt.Print("\nProceed with these operations? (y/N): ")
+
+			var response string
+			fmt.Scanln(&response)
+
+			if strings.ToLower(strings.TrimSpace(response)) != "y" {
+				fmt.Println("❌ Unsafe repairs skipped")
+				return nil
+			}
+		}
+
+		fmt.Printf("\n🔧 Performing %d operation(s) requiring confirmation...\n", len(unsafeActions))
+		unsafeResults, err := repo.PerformRepairs(unsafeActions)
+		if err != nil {
+			fmt.Printf("❌ Error during repairs: %v\n", err)
+		}
+		displayRepairResults(unsafeResults)
+	}
+
+	fmt.Println("\n✅ Repair process complete!")
+	fmt.Println("💡 Run 'auto-worktree health-check' to verify all issues are resolved")
+
+	return nil
+}
+
+// displayRepairResults prints repair results in a readable format
+func displayRepairResults(results []git.RepairResult) {
+	for _, result := range results {
+		if result.Success {
+			fmt.Printf("   ✅ %s\n", result.Message)
+		} else {
+			fmt.Printf("   ❌ %s\n", result.Message)
+			if result.Error != nil {
+				fmt.Printf("      Error: %v\n", result.Error)
+			}
+		}
+	}
+}
+
+// RunMonitor runs continuous health monitoring with interactive UI
+func RunMonitor() error {
+	span := perf.StartSpan("monitor-command")
+	defer span()
+
+	repo, err := git.NewRepository()
+	if err != nil {
+		return fmt.Errorf("failed to initialize repository: %w", err)
+	}
+
+	// Parse interval flag
+	interval := 60 * time.Second
+	for i, arg := range os.Args[2:] {
+		if arg == "--interval" || arg == "-i" {
+			if i+1 < len(os.Args[2:]) {
+				seconds, err := strconv.Atoi(os.Args[2:][i+1])
+				if err == nil && seconds > 0 {
+					interval = time.Duration(seconds) * time.Second
+				}
+			}
+		}
+	}
+
+	// Create and run the monitor UI
+	monitor := ui.NewMonitor(repo, interval)
+	p := tea.NewProgram(monitor, tea.WithAltScreen())
+
+	if _, err := p.Run(); err != nil {
+		return fmt.Errorf("failed to run monitor: %w", err)
+	}
+
+	return nil
+}
