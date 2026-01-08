@@ -109,14 +109,8 @@ func runCommand(command string) error {
 	case "doctor":
 		return runDoctorCommand()
 
-	case "health-check", "health":
-		return cmd.RunHealthCheck()
-
-	case "repair":
-		return cmd.RunRepair()
-
-	case "monitor":
-		return cmd.RunMonitor()
+	case "health-check", "health", "repair", "monitor":
+		return runHealthCommand(command)
 
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", command)
@@ -153,6 +147,19 @@ func runRemoveCommand() error {
 	}
 
 	return cmd.RunRemove(os.Args[2])
+}
+
+func runHealthCommand(command string) error {
+	switch command {
+	case "health-check", "health":
+		return cmd.RunHealthCheck()
+	case "repair":
+		return cmd.RunRepair()
+	case "monitor":
+		return cmd.RunMonitor()
+	default:
+		return fmt.Errorf("unknown health command: %s", command)
+	}
 }
 
 func runDoctorCommand() error {
